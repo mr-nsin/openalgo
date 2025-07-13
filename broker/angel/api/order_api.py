@@ -6,6 +6,7 @@ from database.token_db import get_token , get_br_symbol, get_symbol
 from broker.angel.mapping.transform_data import transform_data , map_product_type, reverse_map_product_type, transform_modify_order_data
 from utils.httpx_client import get_httpx_client
 from utils.logging import get_logger
+from utils.broker_config import get_broker_config_manager
 
 logger = get_logger(__name__)
 
@@ -13,23 +14,29 @@ logger = get_logger(__name__)
 def get_api_response(endpoint, auth, method="GET", payload=''):
     AUTH_TOKEN = auth
     api_key = os.getenv('BROKER_API_KEY')
+    
+    # Get broker configuration
+    config_manager = get_broker_config_manager()
+    broker_config = config_manager.get_broker_config('angel')
+    
+    if not broker_config:
+        raise Exception("Angel broker configuration not found")
+    
+    api_config = broker_config.get('api_config', {})
 
     # Get the shared httpx client with connection pooling
     client = get_httpx_client()
     
-    headers = {
-      'Authorization': f'Bearer {AUTH_TOKEN}',
-      'Content-Type': 'application/json',
-      'Accept': 'application/json',
-      'X-UserType': 'USER',
-      'X-SourceID': 'WEB',
-      'X-ClientLocalIP': 'CLIENT_LOCAL_IP',
-      'X-ClientPublicIP': 'CLIENT_PUBLIC_IP',
-      'X-MACAddress': 'MAC_ADDRESS',
-      'X-PrivateKey': api_key
-    }
+    # Get headers from configuration
+    headers = api_config.get('headers', {}).copy()
+    headers.update({
+        'Authorization': f'Bearer {AUTH_TOKEN}',
+        'X-PrivateKey': api_key
+    })
     
-    url = f"https://apiconnect.angelbroking.com{endpoint}"
+    # Get base URL from configuration
+    base_url = api_config.get('base_url', 'https://apiconnect.angelbroking.com')
+    url = f"{base_url}{endpoint}"
     
     if method == "GET":
         response = client.get(url, headers=headers)

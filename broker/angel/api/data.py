@@ -7,6 +7,7 @@ import urllib.parse
 from database.token_db import get_br_symbol, get_token, get_oa_symbol
 from utils.httpx_client import get_httpx_client
 from utils.logging import get_logger
+from utils.broker_config import get_broker_config_manager
 
 logger = get_logger(__name__)
 
@@ -15,26 +16,32 @@ def get_api_response(endpoint, auth, method="GET", payload=''):
     """Helper function to make API calls to Angel One"""
     AUTH_TOKEN = auth
     api_key = os.getenv('BROKER_API_KEY')
+    
+    # Get broker configuration
+    config_manager = get_broker_config_manager()
+    broker_config = config_manager.get_broker_config('angel')
+    
+    if not broker_config:
+        raise Exception("Angel broker configuration not found")
+    
+    api_config = broker_config.get('api_config', {})
 
     # Get the shared httpx client with connection pooling
     client = get_httpx_client()
     
-    headers = {
+    # Get headers from configuration
+    headers = api_config.get('headers', {}).copy()
+    headers.update({
         'Authorization': f'Bearer {AUTH_TOKEN}',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-        'X-UserType': 'USER',
-        'X-SourceID': 'WEB',
-        'X-ClientLocalIP': 'CLIENT_LOCAL_IP',
-        'X-ClientPublicIP': 'CLIENT_PUBLIC_IP',
-        'X-MACAddress': 'MAC_ADDRESS',
         'X-PrivateKey': api_key
-    }
+    })
 
     if isinstance(payload, dict):
         payload = json.dumps(payload)
 
-    url = f"https://apiconnect.angelbroking.com{endpoint}"
+    # Get base URL from configuration
+    base_url = api_config.get('base_url', 'https://apiconnect.angelbroking.com')
+    url = f"{base_url}{endpoint}"
     
     try:
         if method == "GET":
@@ -62,20 +69,27 @@ class BrokerData:
     def __init__(self, auth_token):
         """Initialize Angel data handler with authentication token"""
         self.auth_token = auth_token
-        # Map common timeframe format to Angel resolutions
-        self.timeframe_map = {
-            # Minutes
+        
+        # Get broker configuration
+        config_manager = get_broker_config_manager()
+        self.broker_config = config_manager.get_broker_config('angel')
+        
+        if not self.broker_config:
+            raise Exception("Angel broker configuration not found")
+        
+        # Get timeframe mapping from configuration
+        timeframe_config = self.broker_config.get('timeframes', {})
+        self.timeframe_map = timeframe_config.get('mapping', {
+            # Default mapping if not in config
             '1m': 'ONE_MINUTE',
             '3m': 'THREE_MINUTE',
             '5m': 'FIVE_MINUTE',
             '10m': 'TEN_MINUTE',
             '15m': 'FIFTEEN_MINUTE',
             '30m': 'THIRTY_MINUTE',
-            # Hours
             '1h': 'ONE_HOUR',
-            # Daily
             'D': 'ONE_DAY'
-        }
+        })
 
     def get_quotes(self, symbol: str, exchange: str) -> dict:
         """

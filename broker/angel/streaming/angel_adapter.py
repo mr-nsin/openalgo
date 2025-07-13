@@ -17,6 +17,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '../../../'))
 from websocket_proxy.base_adapter import BaseBrokerWebSocketAdapter
 from websocket_proxy.mapping import SymbolMapper
 from .angel_mapping import AngelExchangeMapper, AngelCapabilityRegistry
+from utils.broker_config import get_broker_config_manager
 
 class AngelWebSocketAdapter(BaseBrokerWebSocketAdapter):
     """Angel-specific implementation of the WebSocket adapter"""
@@ -33,6 +34,17 @@ class AngelWebSocketAdapter(BaseBrokerWebSocketAdapter):
         self.max_reconnect_attempts = 10
         self.running = False
         self.lock = threading.Lock()
+        
+        # Get broker configuration
+        self.config_manager = get_broker_config_manager()
+        self.broker_config = self.config_manager.get_broker_config('angel')
+        
+        if self.broker_config:
+            # Get WebSocket configuration
+            ws_config = self.broker_config.get('websocket_config', {})
+            self.reconnect_delay = ws_config.get('reconnect_delay', 5)
+            self.max_reconnect_delay = ws_config.get('max_reconnect_delay', 60)
+            self.max_reconnect_attempts = ws_config.get('max_reconnect_attempts', 10)
     
     def initialize(self, broker_name: str, user_id: str, auth_data: Optional[Dict[str, str]] = None) -> None:
         """

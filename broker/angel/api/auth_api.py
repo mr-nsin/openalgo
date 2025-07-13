@@ -2,13 +2,22 @@ import httpx
 import json
 import os
 from utils.httpx_client import get_httpx_client
+from utils.broker_config import get_broker_config_manager
 
 def authenticate_broker(clientcode, broker_pin, totp_code):
     """
     Authenticate with the broker and return the auth token.
     """
+    # Get broker configuration
+    config_manager = get_broker_config_manager()
+    broker_config = config_manager.get_broker_config('angel')
+    
+    if not broker_config:
+        return None, None, "Broker configuration not found"
+    
     api_key = os.getenv('BROKER_API_KEY')
-
+    api_config = broker_config.get('api_config', {})
+    
     try:
         # Get the shared httpx client
         client = get_httpx_client()
@@ -18,19 +27,18 @@ def authenticate_broker(clientcode, broker_pin, totp_code):
             "password": broker_pin,
             "totp": totp_code
         })
-        headers = {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-UserType': 'USER',
-            'X-SourceID': 'WEB',
-            'X-ClientLocalIP': 'CLIENT_LOCAL_IP',  # Ensure these are handled or replaced appropriately
-            'X-ClientPublicIP': 'CLIENT_PUBLIC_IP',
-            'X-MACAddress': 'MAC_ADDRESS',
-            'X-PrivateKey': api_key
-        }
+        
+        # Get headers from configuration
+        headers = api_config.get('headers', {}).copy()
+        headers['X-PrivateKey'] = api_key
+        
+        # Get auth endpoint URL from configuration
+        base_url = api_config.get('base_url', 'https://apiconnect.angelbroking.com')
+        auth_endpoint = api_config.get('endpoints', {}).get('auth', '/rest/auth/angelbroking/user/v1/loginByPassword')
+        auth_url = f"{base_url}{auth_endpoint}"
 
         response = client.post(
-            "https://apiconnect.angelbroking.com/rest/auth/angelbroking/user/v1/loginByPassword",
+            auth_url,
             headers=headers,
             content=payload
         )

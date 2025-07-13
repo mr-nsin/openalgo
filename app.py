@@ -46,6 +46,7 @@ from database.latency_db import init_latency_db as ensure_latency_tables_exists
 from database.strategy_db import init_db as ensure_strategy_tables_exists
 
 from utils.plugin_loader import load_broker_auth_functions
+from utils.broker_config import BrokerConfigManager
 
 import os
 
@@ -206,6 +207,12 @@ def create_app():
 
 def setup_environment(app):
     with app.app_context():
+        # Initialize broker configuration manager
+        logger.info("Initializing broker configuration manager...")
+        broker_config_manager = BrokerConfigManager()
+        app.broker_config_manager = broker_config_manager
+        logger.info("Broker configuration manager initialized successfully")
+        
         #load broker plugins
         app.broker_auth_functions = load_broker_auth_functions()
         # Ensure all the tables exist

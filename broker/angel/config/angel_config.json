@@ -1,0 +1,250 @@
+{
+  "broker_name": "angel",
+  "display_name": "Angel One",
+  "description": "Angel One (formerly Angel Broking) - Leading discount broker in India",
+  "api_config": {
+    "base_url": "https://apiconnect.angelbroking.com",
+    "timeout": 30,
+    "retry_count": 3,
+    "backoff_factor": 0.3,
+    "rate_limit": {
+      "requests_per_second": 10,
+      "requests_per_minute": 600
+    },
+    "headers": {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "X-UserType": "USER",
+      "X-SourceID": "WEB",
+      "X-ClientLocalIP": "CLIENT_LOCAL_IP",
+      "X-ClientPublicIP": "CLIENT_PUBLIC_IP",
+      "X-MACAddress": "MAC_ADDRESS"
+    },
+    "endpoints": {
+      "auth": "/rest/auth/angelbroking/user/v1/loginByPassword",
+      "logout": "/rest/secure/angelbroking/user/v1/logout",
+      "profile": "/rest/secure/angelbroking/user/v1/getProfile",
+      "quotes": "/rest/secure/angelbroking/order/v1/getLTP",
+      "quote_detailed": "/rest/secure/angelbroking/order/v1/getQuote",
+      "market_depth": "/rest/secure/angelbroking/order/v1/getMarketData",
+      "candle_data": "/rest/secure/angelbroking/historical/v1/getCandleData",
+      "orders": "/rest/secure/angelbroking/order/v1/placeOrder",
+      "modify_order": "/rest/secure/angelbroking/order/v1/modifyOrder",
+      "cancel_order": "/rest/secure/angelbroking/order/v1/cancelOrder",
+      "order_book": "/rest/secure/angelbroking/order/v1/getOrderBook",
+      "trade_book": "/rest/secure/angelbroking/order/v1/getTradeBook",
+      "positions": "/rest/secure/angelbroking/order/v1/getPosition",
+      "holdings": "/rest/secure/angelbroking/portfolio/v1/getHolding",
+      "funds": "/rest/secure/angelbroking/user/v1/getRMS",
+      "search_scrip": "/rest/secure/angelbroking/order/v1/searchScrip",
+      "convert_position": "/rest/secure/angelbroking/order/v1/convertPosition"
+    }
+  },
+  "websocket_config": {
+    "url": "wss://smartapisocket.angelone.in/smart-stream",
+    "heartbeat_interval": 10,
+    "reconnect_delay": 5,
+    "max_reconnect_delay": 60,
+    "max_reconnect_attempts": 10,
+    "subscription_modes": {
+      "LTP": 1,
+      "QUOTE": 2,
+      "SNAP_QUOTE": 3,
+      "DEPTH": 4
+    },
+    "max_subscriptions_per_connection": 500,
+    "ping_interval": 30,
+    "pong_timeout": 10
+  },
+  "authentication": {
+    "type": "jwt_token",
+    "requires_totp": true,
+    "token_fields": {
+      "auth_token": "jwtToken",
+      "feed_token": "feedToken",
+      "refresh_token": "refreshToken"
+    },
+    "token_expiry": 86400,
+    "session_management": {
+      "auto_refresh": true,
+      "refresh_before_expiry": 300
+    }
+  },
+  "order_types": {
+    "supported": [
+      "MARKET",
+      "LIMIT",
+      "STOPLOSS_LIMIT",
+      "STOPLOSS_MARKET"
+    ],
+    "validity": [
+      "DAY",
+      "IOC"
+    ],
+    "product_types": [
+      "DELIVERY",
+      "INTRADAY",
+      "MARGIN",
+      "BO",
+      "CO"
+    ]
+  },
+  "exchanges": {
+    "supported": [
+      "NSE",
+      "BSE",
+      "NFO",
+      "BFO",
+      "CDS",
+      "MCX"
+    ],
+    "mapping": {
+      "NSE": "NSE",
+      "BSE": "BSE",
+      "NFO": "NFO",
+      "BFO": "BFO",
+      "CDS": "CDS",
+      "MCX": "MCX",
+      "NSE_INDEX": "NSE",
+      "BSE_INDEX": "BSE",
+      "MCX_INDEX": "MCX"
+    },
+    "index_symbols": {
+      "NSE": ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY"],
+      "BSE": ["SENSEX", "BANKEX"],
+      "MCX": ["CRUDEOIL", "GOLD", "SILVER", "COPPER"]
+    }
+  },
+  "timeframes": {
+    "supported": [
+      "1m",
+      "3m",
+      "5m",
+      "10m",
+      "15m",
+      "30m",
+      "1h",
+      "1D"
+    ],
+    "mapping": {
+      "1m": "ONE_MINUTE",
+      "3m": "THREE_MINUTE",
+      "5m": "FIVE_MINUTE",
+      "10m": "TEN_MINUTE",
+      "15m": "FIFTEEN_MINUTE",
+      "30m": "THIRTY_MINUTE",
+      "1h": "ONE_HOUR",
+      "1D": "ONE_DAY"
+    },
+    "default": "1m"
+  },
+  "market_data": {
+    "quote_fields": [
+      "open",
+      "high",
+      "low",
+      "close",
+      "ltp",
+      "volume",
+      "oi",
+      "totalbuyqty",
+      "totalsellqty",
+      "avgprice",
+      "upperCircuit",
+      "lowerCircuit",
+      "52weekhigh",
+      "52weeklow"
+    ],
+    "depth_levels": {
+      "NSE": [5, 20],
+      "BSE": [5],
+      "NFO": [5, 20],
+      "BFO": [5],
+      "CDS": [5],
+      "MCX": [5]
+    },
+    "streaming_data_types": [
+      "ltp",
+      "quote",
+      "depth",
+      "oi"
+    ]
+  },
+  "features": {
+    "supports_market_data": true,
+    "supports_websocket": true,
+    "supports_historical_data": true,
+    "supports_options": true,
+    "supports_futures": true,
+    "supports_commodities": true,
+    "supports_currency": true,
+    "supports_indices": true,
+    "supports_bracket_orders": true,
+    "supports_cover_orders": true,
+    "supports_amo": true,
+    "supports_gtt": false,
+    "supports_stop_loss": true,
+    "supports_iceberg": false,
+    "supports_multi_leg": false,
+    "supports_portfolio_analysis": true,
+    "supports_margin_calculation": true
+  },
+  "limits": {
+    "max_orders_per_day": 10000,
+    "max_positions": 1000,
+    "max_order_value": 10000000,
+    "min_order_value": 1,
+    "tick_size": {
+      "equity": 0.05,
+      "futures": 0.05,
+      "options": 0.05,
+      "currency": 0.0025
+    },
+    "lot_sizes": {
+      "equity": 1,
+      "futures": "contract_specific",
+      "options": "contract_specific"
+    }
+  },
+  "error_codes": {
+    "AB1001": "Invalid session",
+    "AB1002": "Invalid API key",
+    "AB1003": "Insufficient funds",
+    "AB1004": "Order rejected",
+    "AB1005": "Symbol not found",
+    "AB1006": "Market closed",
+    "AB1007": "Rate limit exceeded",
+    "AB1008": "Position limit exceeded"
+  },
+  "market_timings": {
+    "equity": {
+      "pre_open": "09:00:00",
+      "open": "09:15:00",
+      "close": "15:30:00",
+      "post_close": "15:40:00"
+    },
+    "derivatives": {
+      "open": "09:15:00",
+      "close": "15:30:00"
+    },
+    "currency": {
+      "open": "09:00:00",
+      "close": "17:00:00"
+    },
+    "commodity": {
+      "open": "09:00:00",
+      "close": "23:30:00"
+    }
+  },
+  "ui_config": {
+    "theme_color": "#FF6B35",
+    "logo_url": "/static/images/brokers/angel.png",
+    "login_redirect_url": "/angel/callback",
+    "documentation_url": "https://smartapi.angelbroking.com/docs",
+    "support_url": "https://www.angelone.in/support",
+    "broker_website": "https://www.angelone.in"
+  },
+  "version": "1.0.0",
+  "last_updated": "2025-01-12T10:00:00Z",
+  "config_schema_version": "1.0"
+}
