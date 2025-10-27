@@ -110,6 +110,93 @@ def enhanced_search_symbols(query: str, exchange: str = None) -> List[SymToken]:
         logger.error(f"Error in enhanced search: {str(e)}")
         return []
 
+def get_symbols_with_options() -> List[dict]:
+    """
+    Get symbols that have option chains available (both CE and PE instruments)
+    
+    Returns:
+        List[dict]: List of symbols with option chains
+    """
+    try:
+        # Find symbols that have both CE and PE instruments
+        ce_symbols = db_session.query(SymToken.name).filter(
+            SymToken.instrumenttype == 'CE',
+            SymToken.name.isnot(None)
+        ).distinct().subquery()
+        
+        pe_symbols = db_session.query(SymToken.name).filter(
+            SymToken.instrumenttype == 'PE',
+            SymToken.name.isnot(None)
+        ).distinct().subquery()
+        
+        # Get symbols that exist in both CE and PE
+        symbols_with_options = db_session.query(SymToken.name).filter(
+            SymToken.name.in_(ce_symbols),
+            SymToken.name.in_(pe_symbols)
+        ).distinct().order_by(SymToken.name).all()
+        
+        # Convert to list of dictionaries
+        result = [{'symbol': symbol[0], 'name': symbol[0]} for symbol in symbols_with_options]
+        
+        logger.info(f"Found {len(result)} symbols with option chains")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting symbols with options: {str(e)}")
+        return []
+
+def get_expiry_dates(symbol: str) -> List[dict]:
+    """
+    Get expiry dates for a given symbol
+    
+    Args:
+        symbol (str): The symbol to get expiry dates for
+        
+    Returns:
+        List[dict]: List of expiry dates
+    """
+    try:
+        expiry_dates = db_session.query(SymToken.expiry).filter(
+            SymToken.name == symbol,
+            SymToken.expiry.isnot(None),
+            SymToken.expiry != ''
+        ).distinct().order_by(SymToken.expiry).all()
+        
+        # Convert to list of dictionaries
+        result = [{'expiry': expiry[0], 'display': expiry[0]} for expiry in expiry_dates]
+        
+        logger.info(f"Found {len(result)} expiry dates for {symbol}")
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error getting expiry dates for {symbol}: {str(e)}")
+        return []
+
+def get_option_symbols_by_expiry(symbol: str, expiry: str) -> List[SymToken]:
+    """
+    Get option symbols for a given underlying symbol and expiry
+    
+    Args:
+        symbol (str): The underlying symbol
+        expiry (str): The expiry date
+        
+    Returns:
+        List[SymToken]: List of option symbols
+    """
+    try:
+        option_symbols = db_session.query(SymToken).filter(
+            SymToken.name == symbol,
+            SymToken.expiry == expiry,
+            SymToken.instrumenttype.in_(['CE', 'PE'])
+        ).order_by(SymToken.strike, SymToken.instrumenttype).all()
+        
+        logger.info(f"Found {len(option_symbols)} option symbols for {symbol} {expiry}")
+        return option_symbols
+        
+    except Exception as e:
+        logger.error(f"Error getting option symbols for {symbol} {expiry}: {str(e)}")
+        return []
+
 def init_db():
     """Initialize the database"""
     logger.info("Initializing Master Contract DB")

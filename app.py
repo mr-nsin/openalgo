@@ -39,6 +39,7 @@ from blueprints.python_strategy import python_strategy_bp  # Import the python s
 from blueprints.telegram import telegram_bp  # Import the telegram blueprint
 from blueprints.security import security_bp  # Import the security blueprint
 from blueprints.sandbox import sandbox_bp  # Import the sandbox blueprint
+from blueprints.optionchain import optionchain_bp  # Import the optionchain blueprint
 from services.telegram_bot_service import telegram_bot_service
 from database.telegram_db import get_bot_config
 
@@ -177,6 +178,7 @@ def create_app():
     app.register_blueprint(telegram_bp)  # Register Telegram blueprint
     app.register_blueprint(security_bp)  # Register Security blueprint
     app.register_blueprint(sandbox_bp)  # Register Sandbox blueprint
+    app.register_blueprint(optionchain_bp)  # Register Option Chain blueprint
 
 
     # Exempt webhook endpoints from CSRF protection after app initialization
