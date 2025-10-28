@@ -17,7 +17,6 @@ document.addEventListener('DOMContentLoaded', function() {
     let currentSymbol = '';
     let currentExpiry = '';
     let optionChainData = {};
-    let websocket = null;
     let isSubscribed = false;
     let symbolTokenMap = {};
 
@@ -26,7 +25,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Initialize
     loadSymbols();
-    initializeWebSocket();
+    updateSocketStatus();
 
     // Event listeners
     symbolSelect.addEventListener('change', handleSymbolChange);
@@ -38,6 +37,15 @@ document.addEventListener('DOMContentLoaded', function() {
     if (typeof socket !== 'undefined') {
         socket.on('option_chain_subscription', handleSubscriptionEvent);
         socket.on('option_chain_update', handleMarketDataUpdate);
+        
+        // Listen for socket connection status
+        socket.on('connect', function() {
+            updateSocketStatus(true);
+        });
+        
+        socket.on('disconnect', function() {
+            updateSocketStatus(false);
+        });
     }
 
     async function loadSymbols() {
@@ -267,13 +275,14 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (data.action === 'subscribe') {
             symbolTokenMap = data.symbol_map || {};
-            
-            // Connect to WebSocket for market data
-            if (data.tokens && data.tokens.length > 0) {
-                connectToWebSocket(data.tokens);
-            }
+            isSubscribed = true;
+            updateSocketStatus(true);
+            showToast(`Subscribed to ${data.total_symbols} option symbols`, 'success');
         } else if (data.action === 'unsubscribe') {
-            disconnectWebSocket();
+            isSubscribed = false;
+            symbolTokenMap = {};
+            updateSocketStatus(false);
+            showToast('Unsubscribed from option chain updates', 'info');
         }
     }
 
@@ -282,84 +291,18 @@ document.addEventListener('DOMContentLoaded', function() {
         updateOptionChainCell(data);
     }
 
-    function initializeWebSocket() {
-        // This will be used for direct WebSocket connection to the proxy
-        updateWebSocketStatus(false);
-    }
-
-    function connectToWebSocket(tokens) {
-        try {
-            // Connect to WebSocket proxy (adjust URL as needed)
-            const wsUrl = `ws://${window.location.host}/ws`;
-            websocket = new WebSocket(wsUrl);
-            
-            websocket.onopen = function() {
-                console.log('WebSocket connected');
-                updateWebSocketStatus(true);
-                
-                // Authenticate and subscribe
-                websocket.send(JSON.stringify({
-                    type: 'auth',
-                    token: 'your-auth-token' // This should come from the backend
-                }));
-                
-                // Subscribe to tokens
-                websocket.send(JSON.stringify({
-                    type: 'subscribe',
-                    tokens: tokens
-                }));
-                
-                isSubscribed = true;
-            };
-            
-            websocket.onmessage = function(event) {
-                try {
-                    const data = JSON.parse(event.data);
-                    if (data.type === 'market_data') {
-                        updateOptionChainCell(data);
-                    }
-                } catch (error) {
-                    console.error('Error parsing WebSocket message:', error);
-                }
-            };
-            
-            websocket.onclose = function() {
-                console.log('WebSocket disconnected');
-                updateWebSocketStatus(false);
-                isSubscribed = false;
-                
-                // Attempt to reconnect after 5 seconds
-                setTimeout(() => {
-                    if (currentSymbol && currentExpiry) {
-                        connectToWebSocket(tokens);
-                    }
-                }, 5000);
-            };
-            
-            websocket.onerror = function(error) {
-                console.error('WebSocket error:', error);
-                updateWebSocketStatus(false);
-            };
-            
-        } catch (error) {
-            console.error('Error connecting to WebSocket:', error);
-            updateWebSocketStatus(false);
+    function updateSocketStatus(connected = null) {
+        // If connected parameter is not provided, check socket status
+        if (connected === null) {
+            connected = (typeof socket !== 'undefined' && socket.connected);
         }
-    }
-
-    function disconnectWebSocket() {
-        if (websocket) {
-            websocket.close();
-            websocket = null;
-        }
-        isSubscribed = false;
-        updateWebSocketStatus(false);
-    }
-
-    function updateWebSocketStatus(connected) {
-        if (connected) {
+        
+        if (connected && isSubscribed) {
             wsStatusDot.classList.add('connected');
             wsStatusText.textContent = 'Connected';
+        } else if (connected) {
+            wsStatusDot.classList.remove('connected');
+            wsStatusText.textContent = 'Connected (Not Subscribed)';
         } else {
             wsStatusDot.classList.remove('connected');
             wsStatusText.textContent = 'Disconnected';
@@ -422,8 +365,12 @@ document.addEventListener('DOMContentLoaded', function() {
             </tr>
         `;
         
-        // Disconnect WebSocket
-        disconnectWebSocket();
+        // Unsubscribe from updates
+        if (isSubscribed && typeof socket !== 'undefined') {
+            // Could emit unsubscribe event here if needed
+            isSubscribed = false;
+            updateSocketStatus();
+        }
     }
 
     function showLoadingOverlay() {
@@ -454,6 +401,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Cleanup on page unload
     window.addEventListener('beforeunload', function() {
-        disconnectWebSocket();
+        if (isSubscribed && typeof socket !== 'undefined') {
+            // Could emit unsubscribe event here if needed
+            isSubscribed = false;
+        }
     });
 });

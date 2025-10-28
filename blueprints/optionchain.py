@@ -1,29 +1,27 @@
 from flask import Blueprint, render_template, request, jsonify, session
 from flask_wtf.csrf import validate_csrf
+from flask_socketio import join_room, leave_room
 from database.auth_db import get_auth_token
 from database.symbol import get_symbols_with_options, get_expiry_dates
 from services.optionchain_service import get_option_chain_data, subscribe_to_option_chain
 from utils.session import check_session_validity
+from extensions import socketio
 import logging
 
 # Create the optionchain blueprint
 optionchain_bp = Blueprint('optionchain_bp', __name__, url_prefix='/optionchain')
 
 @optionchain_bp.route('/')
+@check_session_validity
 def optionchain():
     """Render the option chain page"""
-    if not check_session_validity():
-        return render_template('login.html', error="Session expired. Please log in again.")
-    
     return render_template('optionchain.html')
 
 @optionchain_bp.route('/api/symbols', methods=['GET'])
+@check_session_validity
 def get_symbols():
     """Get symbols that have option chains available"""
     try:
-        if not check_session_validity():
-            return jsonify({'status': 'error', 'message': 'Session expired'}), 401
-        
         symbols = get_symbols_with_options()
         return jsonify({
             'status': 'success',
@@ -38,12 +36,10 @@ def get_symbols():
         }), 500
 
 @optionchain_bp.route('/api/expiry', methods=['GET'])
+@check_session_validity
 def get_expiry():
     """Get expiry dates for a given symbol"""
     try:
-        if not check_session_validity():
-            return jsonify({'status': 'error', 'message': 'Session expired'}), 401
-        
         symbol = request.args.get('symbol')
         if not symbol:
             return jsonify({
@@ -65,12 +61,10 @@ def get_expiry():
         }), 500
 
 @optionchain_bp.route('/api/data', methods=['POST'])
+@check_session_validity
 def get_option_data():
     """Get option chain data for a symbol and expiry"""
     try:
-        if not check_session_validity():
-            return jsonify({'status': 'error', 'message': 'Session expired'}), 401
-        
         # Validate CSRF token
         validate_csrf(request.headers.get('X-CSRFToken'))
         
@@ -85,7 +79,8 @@ def get_option_data():
             }), 400
         
         # Get auth token for the user
-        auth_token = get_auth_token()
+        username = session.get('user')
+        auth_token = get_auth_token(username)
         if not auth_token:
             return jsonify({
                 'status': 'error',
@@ -108,12 +103,10 @@ def get_option_data():
         }), 500
 
 @optionchain_bp.route('/api/subscribe', methods=['POST'])
+@check_session_validity
 def subscribe_option_chain():
     """Subscribe to real-time option chain updates"""
     try:
-        if not check_session_validity():
-            return jsonify({'status': 'error', 'message': 'Session expired'}), 401
-        
         # Validate CSRF token
         validate_csrf(request.headers.get('X-CSRFToken'))
         
@@ -128,7 +121,8 @@ def subscribe_option_chain():
             }), 400
         
         # Get auth token for the user
-        auth_token = get_auth_token()
+        username = session.get('user')
+        auth_token = get_auth_token(username)
         if not auth_token:
             return jsonify({
                 'status': 'error',
@@ -136,7 +130,7 @@ def subscribe_option_chain():
             }), 401
         
         # Subscribe to option chain updates
-        subscription_result = subscribe_to_option_chain(symbol, expiry, auth_token, session.get('userid'))
+        subscription_result = subscribe_to_option_chain(symbol, expiry, auth_token, username)
         
         return jsonify({
             'status': 'success',
@@ -149,3 +143,20 @@ def subscribe_option_chain():
             'status': 'error',
             'message': 'Failed to subscribe to option chain updates'
         }), 500
+
+# SocketIO event handlers for option chain
+@socketio.on('connect')
+def handle_optionchain_connect():
+    """Handle SocketIO connection and join user room"""
+    username = session.get('user')
+    if username:
+        join_room(f'user_{username}')
+        logging.info(f"User {username} joined SocketIO room for option chain")
+
+@socketio.on('disconnect')
+def handle_optionchain_disconnect():
+    """Handle SocketIO disconnection and leave user room"""
+    username = session.get('user')
+    if username:
+        leave_room(f'user_{username}')
+        logging.info(f"User {username} left SocketIO room for option chain")
