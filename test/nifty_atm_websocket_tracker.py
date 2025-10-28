@@ -467,6 +467,33 @@ class WebSocketFeed:
         logger.success(f"✅ Subscription completed in {elapsed:.2f}s")
         return True
 
+    def subscribe_depth(self, instruments: List[Dict[str, str]], on_data_received=None) -> bool:
+        """Subscribe to depth data for given instruments (same as subscribe_ltp but with proper naming)"""
+        if not self.connected or not self.authenticated:
+            logger.error("❌ Not connected or authenticated")
+            return False
+
+        if len(instruments) > MAX_WEBSOCKET_SUBSCRIPTIONS:
+            logger.warning(f"⚠️  Too many instruments ({len(instruments)}) for WebSocket (max: {MAX_WEBSOCKET_SUBSCRIPTIONS})")
+            return False
+
+        self.on_data_callback = on_data_received
+        batch_size = WEBSOCKET_BATCH_SIZE
+        
+        logger.info(f"📡 Subscribing to {len(instruments)} instruments in depth mode (batches of {batch_size})...")
+        start_time = time.time()
+        
+        for i in range(0, len(instruments), batch_size):
+            batch = instruments[i:i + batch_size]
+            req = {"action": "subscribe", "symbols": batch, "mode": 3}  # Depth mode
+            logger.debug(f"📡 Batch {i//batch_size + 1}/{(len(instruments)-1)//batch_size + 1}: {len(batch)} instruments")
+            self.ws.send(json.dumps(req))
+            time.sleep(WEBSOCKET_BATCH_DELAY)  # Minimal delay between batches
+        
+        elapsed = time.time() - start_time
+        logger.success(f"✅ Depth subscription completed in {elapsed:.2f}s")
+        return True
+
     def get_ltp_data(self) -> Dict:
         with self.lock:
             return dict(self.market_data)
@@ -737,17 +764,24 @@ class NiftyATMWebSocketTracker:
                         opt.ltp = float(md.get("ltp", opt.ltp))
                         opt.volume = int(md.get("volume", opt.volume))
                         opt.oi = int(md.get("oi", opt.oi))
-                        opt.bid = float(md.get("bid", opt.bid))
-                        opt.ask = float(md.get("ask", opt.ask))
                         opt.change = float(md.get("change", opt.change))
                         opt.timestamp = int(md.get("timestamp", int(time.time() * 1000)))
                         opt.last_update = datetime.now()
                         opt.update_count += 1
                         opt.last_price = old_price
                         
-                        # Update bid/ask levels
-                        opt.bid_levels = md.get("bid_levels", [])
-                        opt.ask_levels = md.get("ask_levels", [])
+                        # Extract bid/ask from depth data
+                        depth = md.get("depth", {})
+                        buy_levels = depth.get("buy", [])
+                        sell_levels = depth.get("sell", [])
+                        
+                        # Set bid/ask from first level of depth data
+                        opt.bid = float(buy_levels[0].get("price", 0)) if buy_levels else 0.0
+                        opt.ask = float(sell_levels[0].get("price", 0)) if sell_levels else 0.0
+                        
+                        # Update bid/ask levels from depth data
+                        opt.bid_levels = [(float(level.get("price", 0)), int(level.get("quantity", 0))) for level in buy_levels[:5]]
+                        opt.ask_levels = [(float(level.get("price", 0)), int(level.get("quantity", 0))) for level in sell_levels[:5]]
                         
                         # Track option update statistics
                         opt_key = f"{opt.strike}_{opt.option_type}"
@@ -788,7 +822,8 @@ class NiftyATMWebSocketTracker:
         for opt in self.options.values():
             instruments.append({"exchange": "NFO", "symbol": opt.symbol})
         print(f"📡 Setting up WebSocket subscriptions for {len(instruments)} instruments...")
-        ok = self.ws_feed.subscribe_ltp(instruments, on_data_received=self.on_websocket_data)
+        # Use depth mode to get bid/ask data instead of LTP mode
+        ok = self.ws_feed.subscribe_depth(instruments, on_data_received=self.on_websocket_data)
         print("✅ WebSocket subscriptions setup complete" if ok else "❌ Failed to setup subscriptions")
         return ok
 
@@ -1007,25 +1042,52 @@ class NiftyATMWebSocketTracker:
             atm_logger.info("=" * 80)
             atm_logger.info(f"🧿 NIFTY OPTION CHAIN (WebSocket) | NIFTY: ₹{self.nifty_price:.2f} | ATM: {self.atm_strike} | Expiry: {self.current_expiry} | ⏰ {now}")
             
-            # Log ATM options specifically
+            # Log ATM options specifically with detailed information
             atm_ce = by_strike.get(self.atm_strike, {}).get("CE")
             atm_pe = by_strike.get(self.atm_strike, {}).get("PE")
             
             if atm_ce and atm_ce.last_update:
                 bid_levels_str = " | ".join([f"{p:.1f}@{q}" for p, q in atm_ce.bid_levels[:5] if q > 0])
                 ask_levels_str = " | ".join([f"{p:.1f}@{q}" for p, q in atm_ce.ask_levels[:5] if q > 0])
+                spread = atm_ce.ask - atm_ce.bid if atm_ce.ask > 0 and atm_ce.bid > 0 else 0.0
+                mid_price = (atm_ce.bid + atm_ce.ask) / 2 if atm_ce.ask > 0 and atm_ce.bid > 0 else atm_ce.ltp
+                
                 atm_logger.info(f"📞 ATM CALL {atm_ce.strike}: LTP={atm_ce.ltp:.2f} | CHG={atm_ce.change:+.2f} | "
-                              f"Bid={atm_ce.bid:.2f} | Ask={atm_ce.ask:.2f} | "
+                              f"Bid={atm_ce.bid:.2f} | Ask={atm_ce.ask:.2f} | Spread={spread:.2f} | Mid={mid_price:.2f} | "
                               f"BidLevels=[{bid_levels_str or 'N/A'}] | AskLevels=[{ask_levels_str or 'N/A'}] | "
-                              f"Vol={atm_ce.volume:,} | OI={atm_ce.oi:,}")
+                              f"Vol={atm_ce.volume:,} | OI={atm_ce.oi:,} | Updates={atm_ce.update_count} | "
+                              f"LastUpdate={atm_ce.last_update.strftime('%H:%M:%S.%f')[:-3]}")
             
             if atm_pe and atm_pe.last_update:
                 bid_levels_str = " | ".join([f"{p:.1f}@{q}" for p, q in atm_pe.bid_levels[:5] if q > 0])
                 ask_levels_str = " | ".join([f"{p:.1f}@{q}" for p, q in atm_pe.ask_levels[:5] if q > 0])
+                spread = atm_pe.ask - atm_pe.bid if atm_pe.ask > 0 and atm_pe.bid > 0 else 0.0
+                mid_price = (atm_pe.bid + atm_pe.ask) / 2 if atm_pe.ask > 0 and atm_pe.bid > 0 else atm_pe.ltp
+                
                 atm_logger.info(f"📞 ATM PUT {atm_pe.strike}: LTP={atm_pe.ltp:.2f} | CHG={atm_pe.change:+.2f} | "
-                              f"Bid={atm_pe.bid:.2f} | Ask={atm_pe.ask:.2f} | "
+                              f"Bid={atm_pe.bid:.2f} | Ask={atm_pe.ask:.2f} | Spread={spread:.2f} | Mid={mid_price:.2f} | "
                               f"BidLevels=[{bid_levels_str or 'N/A'}] | AskLevels=[{ask_levels_str or 'N/A'}] | "
-                              f"Vol={atm_pe.volume:,} | OI={atm_pe.oi:,}")
+                              f"Vol={atm_pe.volume:,} | OI={atm_pe.oi:,} | Updates={atm_pe.update_count} | "
+                              f"LastUpdate={atm_pe.last_update.strftime('%H:%M:%S.%f')[:-3]}")
+            
+            # Log comprehensive ATM row with all details
+            if atm_ce and atm_ce.last_update and atm_pe and atm_pe.last_update:
+                atm_logger.info("🎯 COMPREHENSIVE ATM ROW:")
+                atm_logger.info(f"   CALL: {atm_ce.strike} | LTP={atm_ce.ltp:.2f} | Bid={atm_ce.bid:.2f} | Ask={atm_ce.ask:.2f} | "
+                              f"Vol={atm_ce.volume:,} | OI={atm_ce.oi:,} | Updates={atm_ce.update_count}")
+                atm_logger.info(f"   PUT:  {atm_pe.strike} | LTP={atm_pe.ltp:.2f} | Bid={atm_pe.bid:.2f} | Ask={atm_pe.ask:.2f} | "
+                              f"Vol={atm_pe.volume:,} | OI={atm_pe.oi:,} | Updates={atm_pe.update_count}")
+                
+                # Log detailed bid/ask levels for both
+                ce_bid_details = " | ".join([f"L{i+1}:{p:.1f}@{q}" for i, (p, q) in enumerate(atm_ce.bid_levels[:5]) if q > 0])
+                ce_ask_details = " | ".join([f"L{i+1}:{p:.1f}@{q}" for i, (p, q) in enumerate(atm_ce.ask_levels[:5]) if q > 0])
+                pe_bid_details = " | ".join([f"L{i+1}:{p:.1f}@{q}" for i, (p, q) in enumerate(atm_pe.bid_levels[:5]) if q > 0])
+                pe_ask_details = " | ".join([f"L{i+1}:{p:.1f}@{q}" for i, (p, q) in enumerate(atm_pe.ask_levels[:5]) if q > 0])
+                
+                atm_logger.info(f"   CALL BID LEVELS:  {ce_bid_details or 'N/A'}")
+                atm_logger.info(f"   CALL ASK LEVELS:  {ce_ask_details or 'N/A'}")
+                atm_logger.info(f"   PUT BID LEVELS:   {pe_bid_details or 'N/A'}")
+                atm_logger.info(f"   PUT ASK LEVELS:   {pe_ask_details or 'N/A'}")
             
             atm_logger.info("=" * 80)
         except Exception as e:
