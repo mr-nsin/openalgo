@@ -1,0 +1,86 @@
+# Historical Data Fetcher Configuration Template
+# Copy this file to .env and fill in your actual values
+
+# =============================================================================
+# QuestDB Configuration
+# =============================================================================
+HIST_FETCHER_QUESTDB_HOST=localhost
+HIST_FETCHER_QUESTDB_PORT=9000
+HIST_FETCHER_QUESTDB_USERNAME=
+HIST_FETCHER_QUESTDB_PASSWORD=
+HIST_FETCHER_QUESTDB_DATABASE=qdb
+
+# =============================================================================
+# OpenAlgo Database (for symtoken table)
+# =============================================================================
+# This should match your OpenAlgo DATABASE_URL
+DATABASE_URL=sqlite:///db/openalgo.db
+
+# =============================================================================
+# Zerodha API Configuration
+# =============================================================================
+HIST_FETCHER_ZERODHA_API_KEY=your_zerodha_api_key_here
+HIST_FETCHER_ZERODHA_ACCESS_TOKEN=your_zerodha_access_token_here
+
+# =============================================================================
+# Processing Configuration
+# =============================================================================
+HIST_FETCHER_API_REQUESTS_PER_SECOND=3
+HIST_FETCHER_MAX_CONCURRENT_REQUESTS=5
+HIST_FETCHER_BATCH_SIZE=50
+HIST_FETCHER_HISTORICAL_DAYS_LIMIT=365
+
+# =============================================================================
+# Data Configuration
+# =============================================================================
+# Comma-separated list of timeframes to fetch
+HIST_FETCHER_ENABLED_TIMEFRAMES=1m,5m,15m,1h,D
+
+# Comma-separated list of instrument types to fetch
+HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=EQ,FUT,CE,PE,INDEX
+
+# Comma-separated list of exchanges to include
+HIST_FETCHER_ENABLED_EXCHANGES=NSE,BSE,NFO,BFO,NSE_INDEX,BSE_INDEX
+
+# Optional: Override start date (format: YYYY-MM-DD)
+# HIST_FETCHER_START_DATE_OVERRIDE=2024-01-01
+
+# =============================================================================
+# Telegram Notifications
+# =============================================================================
+HIST_FETCHER_TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+# JSON array format: ["chat_id_1","chat_id_2"]
+HIST_FETCHER_TELEGRAM_CHAT_IDS=["your_chat_id_here"]
+
+# =============================================================================
+# Email Notifications
+# =============================================================================
+HIST_FETCHER_SMTP_HOST=smtp.gmail.com
+HIST_FETCHER_SMTP_PORT=587
+HIST_FETCHER_SMTP_USERNAME=your_email@gmail.com
+HIST_FETCHER_SMTP_PASSWORD=your_app_password_here
+# JSON array format: ["email1@domain.com","email2@domain.com"]
+HIST_FETCHER_EMAIL_RECIPIENTS=["recipient@email.com"]
+
+# =============================================================================
+# Logging Configuration
+# =============================================================================
+HIST_FETCHER_LOG_LEVEL=INFO
+HIST_FETCHER_LOG_FILE_PATH=logs/historical_fetcher.log
+HIST_FETCHER_LOG_ROTATION=100 MB
+HIST_FETCHER_LOG_RETENTION=30 days
+
+# =============================================================================
+# Performance Configuration
+# =============================================================================
+HIST_FETCHER_ENABLE_PERFORMANCE_MONITORING=true
+HIST_FETCHER_MEMORY_LIMIT_MB=4096
+
+# =============================================================================
+# Notes:
+# =============================================================================
+# 1. Zerodha API credentials can be obtained from your Kite Connect app
+# 2. For Telegram notifications, create a bot via @BotFather and get your chat ID
+# 3. For Gmail, use an App Password instead of your regular password
+# 4. QuestDB should be running before starting the fetcher
+# 5. Adjust batch sizes and concurrency based on your system capabilities

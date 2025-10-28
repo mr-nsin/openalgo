@@ -1,0 +1,642 @@
+"""
+Historical Data Fetcher - Main Orchestrator
+
+Coordinates the entire historical data fetching process with comprehensive
+error handling, progress tracking, and notification system.
+"""
+
+import asyncio
+import sys
+import os
+import traceback
+from datetime import datetime, timedelta
+from typing import Dict, Any, List
+import time
+
+# Add the OpenAlgo root directory to Python path
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
+
+from utils.logging import get_logger
+from config.settings import Settings, InstrumentType, TimeFrame
+from config.timeframes import TimeFrameConfig
+from fetchers.symbol_manager import SymbolManager
+from fetchers.zerodha_fetcher import ZerodhaHistoricalFetcher
+from database.questdb_client import QuestDBClient
+from database.models import FetchSummaryModel
+from notifications.notification_manager import NotificationManager, NotificationFormatter
+from utils.async_logger import setup_async_logger
+from utils.performance_monitor import PerformanceMonitor, AsyncTimer
+
+logger = get_logger(__name__)
+
+class HistoricalDataFetcher:
+    """
+    Main orchestrator for historical data fetching process
+    """
+    
+    def __init__(self):
+        """Initialize the historical data fetcher"""
+        
+        # Load configuration
+        self.settings = Settings()
+        
+        # Setup async logging
+        self.async_logger = setup_async_logger(
+            log_file=self.settings.log_file_path,
+            level=self.settings.log_level,
+            rotation=self.settings.log_rotation,
+            retention=self.settings.log_retention
+        )
+        
+        # Initialize components
+        self.symbol_manager = SymbolManager(self.settings)
+        self.zerodha_fetcher = ZerodhaHistoricalFetcher(self.settings)
+        self.questdb_client = QuestDBClient(self.settings)
+        self.notification_manager = NotificationManager(self.settings)
+        self.performance_monitor = PerformanceMonitor(
+            collection_interval=60.0,
+            enable_auto_collection=self.settings.enable_performance_monitoring
+        )
+        
+        # Processing statistics
+        self.stats = {
+            'start_time': None,
+            'end_time': None,
+            'total_symbols': 0,
+            'processed_symbols': 0,
+            'successful_symbols': 0,
+            'failed_symbols': 0,
+            'total_records': 0,
+            'instrument_type_stats': {},
+            'exchange_stats': {},
+            'timeframe_stats': {},
+            'errors': [],
+            'warnings': []
+        }
+        
+        # Progress tracking
+        self.last_progress_notification = 0
+        self.progress_notification_interval = 300  # 5 minutes
+    
+    async def run(self):
+        """Main execution method"""
+        
+        try:
+            logger.info("🚀 Starting Historical Data Fetcher")
+            await self.async_logger.log_system_metrics(await self._get_system_info())
+            
+            # Initialize all components
+            await self._initialize_components()
+            
+            # Start performance monitoring
+            await self.performance_monitor.start_monitoring()
+            
+            # Get symbols categorized by instrument type
+            symbols_by_type = await self.symbol_manager.get_all_active_symbols()
+            
+            # Calculate total symbols and start processing stats
+            total_symbols = sum(len(symbols) for symbols in symbols_by_type.values())
+            self.stats['total_symbols'] = total_symbols
+            self.stats['start_time'] = datetime.now()
+            
+            self.performance_monitor.start_processing(total_symbols)
+            
+            logger.info(f"📊 Found {total_symbols:,} symbols across {len(symbols_by_type)} instrument types")
+            await self._log_symbol_breakdown(symbols_by_type)
+            
+            # Send initial notification if configured
+            if self.notification_manager.is_configured():
+                await self.notification_manager.send_custom_message(
+                    f"🚀 Historical data fetch started\n"
+                    f"📊 Processing {total_symbols:,} symbols across {len(symbols_by_type)} instrument types",
+                    channels=['telegram']
+                )
+            
+            # Process each instrument type
+            for instrument_type, symbols in symbols_by_type.items():
+                if not symbols:
+                    continue
+                
+                logger.info(f"🔄 Processing {instrument_type.value} symbols ({len(symbols):,} symbols)")
+                await self._process_instrument_type(instrument_type, symbols)
+            
+            # Finalize processing
+            await self._finalize_processing()
+            
+            # Send success notification
+            await self.notification_manager.send_success_notification(self.stats)
+            
+            logger.info("✅ Historical data fetch completed successfully")
+            
+        except KeyboardInterrupt:
+            logger.info("⏹️ Process interrupted by user")
+            await self._handle_interruption()
+            
+        except Exception as e:
+            logger.error(f"💥 Fatal error in historical data fetcher: {e}")
+            logger.error(traceback.format_exc())
+            
+            await self._handle_fatal_error(e)
+            raise
+            
+        finally:
+            await self._cleanup_components()
+    
+    async def _initialize_components(self):
+        """Initialize all components and verify connections"""
+        
+        logger.info("🔗 Initializing components...")
+        
+        # Initialize Zerodha fetcher
+        await self.zerodha_fetcher.initialize()
+        
+        # Connect to QuestDB and create tables
+        await self.questdb_client.connect()
+        await self.questdb_client.create_tables()
+        
+        # Test notification connections
+        if self.notification_manager.is_configured():
+            connection_results = await self.notification_manager.test_all_connections()
+            for channel, status in connection_results.items():
+                if status:
+                    logger.info(f"✅ {channel.title()} notification connection verified")
+                else:
+                    logger.warning(f"⚠️ {channel.title()} notification connection failed")
+        
+        logger.info("✅ All components initialized successfully")
+    
+    async def _log_symbol_breakdown(self, symbols_by_type: Dict[InstrumentType, List]):
+        """Log detailed symbol breakdown"""
+        
+        for instrument_type, symbols in symbols_by_type.items():
+            count = len(symbols)
+            self.stats['instrument_type_stats'][instrument_type.value] = count
+            
+            if count > 0:
+                # Get exchange breakdown for this instrument type
+                exchange_breakdown = {}
+                for symbol in symbols:
+                    exchange = symbol.exchange
+                    exchange_breakdown[exchange] = exchange_breakdown.get(exchange, 0) + 1
+                
+                logger.info(f"  • {instrument_type.value}: {count:,} symbols")
+                for exchange, ex_count in exchange_breakdown.items():
+                    logger.info(f"    - {exchange}: {ex_count:,}")
+                    
+                    # Update global exchange stats
+                    self.stats['exchange_stats'][exchange] = (
+                        self.stats['exchange_stats'].get(exchange, 0) + ex_count
+                    )
+    
+    async def _process_instrument_type(self, instrument_type: InstrumentType, symbols: List):
+        """Process all symbols for a specific instrument type"""
+        
+        # Process symbols in batches with concurrency control
+        batch_size = self.settings.batch_size
+        semaphore = asyncio.Semaphore(self.settings.max_concurrent_requests)
+        
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            batch_num = i // batch_size + 1
+            total_batches = (len(symbols) + batch_size - 1) // batch_size
+            
+            logger.info(
+                f"📦 Processing batch {batch_num}/{total_batches} "
+                f"({len(batch)} symbols) for {instrument_type.value}"
+            )
+            
+            # Process batch concurrently
+            tasks = [
+                self._process_symbol_with_semaphore(semaphore, symbol)
+                for symbol in batch
+            ]
+            
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Analyze batch results
+            successful_in_batch = sum(1 for r in results if not isinstance(r, Exception))
+            failed_in_batch = len(batch) - successful_in_batch
+            
+            logger.info(
+                f"✅ Batch {batch_num} completed: "
+                f"{successful_in_batch}/{len(batch)} successful, "
+                f"{failed_in_batch} failed"
+            )
+            
+            # Send progress notification if enough time has passed
+            await self._maybe_send_progress_notification(batch[-1].symbol if batch else 'N/A')
+            
+            # Check resource limits
+            await self._check_resource_limits()
+    
+    async def _process_symbol_with_semaphore(self, semaphore, symbol_info):
+        """Process single symbol with rate limiting and error handling"""
+        
+        async with semaphore:
+            start_time = time.monotonic()
+            
+            try:
+                records_inserted = await self._process_single_symbol(symbol_info)
+                
+                # Update statistics
+                self.stats['successful_symbols'] += 1
+                self.stats['total_records'] += records_inserted
+                
+                processing_time = time.monotonic() - start_time
+                
+                # Log symbol processing
+                await self.async_logger.log_symbol_processing(
+                    symbol=symbol_info.symbol,
+                    instrument_type=symbol_info.instrument_type.value,
+                    timeframe="all",
+                    records_count=records_inserted,
+                    processing_time=processing_time,
+                    status="success"
+                )
+                
+                logger.debug(
+                    f"✅ {symbol_info.symbol} ({symbol_info.instrument_type.value}): "
+                    f"{records_inserted:,} records in {processing_time:.2f}s"
+                )
+                
+            except Exception as e:
+                # Update statistics
+                self.stats['failed_symbols'] += 1
+                processing_time = time.monotonic() - start_time
+                
+                error_info = {
+                    'symbol': symbol_info.symbol,
+                    'exchange': symbol_info.exchange,
+                    'instrument_type': symbol_info.instrument_type.value,
+                    'error': str(e),
+                    'processing_time': processing_time
+                }
+                self.stats['errors'].append(error_info)
+                
+                # Log error
+                await self.async_logger.log_symbol_processing(
+                    symbol=symbol_info.symbol,
+                    instrument_type=symbol_info.instrument_type.value,
+                    timeframe="all",
+                    records_count=0,
+                    processing_time=processing_time,
+                    status="error"
+                )
+                
+                logger.error(
+                    f"❌ Error processing {symbol_info.symbol} "
+                    f"({symbol_info.instrument_type.value}) after {processing_time:.2f}s: {e}"
+                )
+            
+            finally:
+                self.stats['processed_symbols'] += 1
+                
+                # Update performance monitor
+                self.performance_monitor.update_processing_progress(
+                    processed=self.stats['processed_symbols'],
+                    successful=self.stats['successful_symbols'],
+                    failed=self.stats['failed_symbols']
+                )
+    
+    async def _process_single_symbol(self, symbol_info) -> int:
+        """Process historical data for a single symbol across all timeframes"""
+        
+        total_records = 0
+        timeframes = self.settings.get_timeframe_objects()
+        
+        # Process timeframes in priority order (daily first, then intraday)
+        ordered_timeframes = TimeFrameConfig.get_processing_order(timeframes)
+        
+        for timeframe in ordered_timeframes:
+            try:
+                async with AsyncTimer(self.performance_monitor, f'fetch_{timeframe.value}'):
+                    # Determine date range
+                    from_date, to_date = await self._get_date_range(symbol_info, timeframe)
+                    
+                    if not from_date or not to_date:
+                        continue
+                    
+                    # Fetch historical data
+                    candles = await self.zerodha_fetcher.fetch_historical_data(
+                        symbol_info,
+                        timeframe,
+                        from_date,
+                        to_date
+                    )
+                    
+                    if candles:
+                        # Store in QuestDB
+                        async with AsyncTimer(self.performance_monitor, f'store_{timeframe.value}'):
+                            records_inserted = await self.questdb_client.upsert_historical_data(
+                                symbol_info,
+                                timeframe.value,
+                                candles
+                            )
+                        
+                        total_records += records_inserted
+                        
+                        # Update timeframe stats
+                        if timeframe.value not in self.stats['timeframe_stats']:
+                            self.stats['timeframe_stats'][timeframe.value] = 0
+                        self.stats['timeframe_stats'][timeframe.value] += records_inserted
+                        
+                        # Update fetch status
+                        await self.questdb_client.update_fetch_status(
+                            symbol_info,
+                            timeframe.value,
+                            'success',
+                            records_inserted
+                        )
+                        
+                        logger.debug(
+                            f"✅ {symbol_info.symbol} ({timeframe.value}): {records_inserted:,} records"
+                        )
+                    else:
+                        logger.debug(f"⚠️ No data found for {symbol_info.symbol} ({timeframe.value})")
+                        
+                        await self.questdb_client.update_fetch_status(
+                            symbol_info,
+                            timeframe.value,
+                            'no_data',
+                            0
+                        )
+            
+            except Exception as e:
+                logger.error(f"❌ Error fetching {symbol_info.symbol} ({timeframe.value}): {e}")
+                
+                await self.questdb_client.update_fetch_status(
+                    symbol_info,
+                    timeframe.value,
+                    'error',
+                    0,
+                    str(e)
+                )
+        
+        return total_records
+    
+    async def _get_date_range(self, symbol_info, timeframe: TimeFrame) -> tuple:
+        """Get appropriate date range for fetching historical data"""
+        
+        end_date = datetime.now()
+        
+        # Check if we have existing data and should do incremental fetch
+        last_fetch_date = await self.questdb_client.get_last_fetch_date(symbol_info, timeframe.value)
+        
+        if last_fetch_date and self.settings.start_date_override is None:
+            # Incremental fetch from last successful date
+            start_date = last_fetch_date
+            logger.debug(f"Incremental fetch for {symbol_info.symbol} from {start_date.date()}")
+        else:
+            # Full fetch based on settings
+            if self.settings.start_date_override:
+                try:
+                    start_date = datetime.strptime(self.settings.start_date_override, "%Y-%m-%d")
+                except ValueError:
+                    logger.warning(f"Invalid start_date_override: {self.settings.start_date_override}")
+                    start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+            else:
+                start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+        
+        return start_date, end_date
+    
+    async def _maybe_send_progress_notification(self, current_symbol: str):
+        """Send progress notification if enough time has passed"""
+        
+        current_time = time.time()
+        
+        if (current_time - self.last_progress_notification) >= self.progress_notification_interval:
+            if self.notification_manager.is_configured():
+                progress_info = NotificationFormatter.create_progress_summary(
+                    processed=self.stats['processed_symbols'],
+                    total=self.stats['total_symbols'],
+                    current_item=current_symbol
+                )
+                
+                progress_info.update({
+                    'elapsed_time': NotificationFormatter.format_duration(
+                        (datetime.now() - self.stats['start_time']).total_seconds()
+                    ),
+                    'records_inserted': self.stats['total_records']
+                })
+                
+                await self.notification_manager.send_progress_notification(progress_info)
+            
+            self.last_progress_notification = current_time
+    
+    async def _check_resource_limits(self):
+        """Check system resource usage and warn if limits exceeded"""
+        
+        if not self.settings.enable_performance_monitoring:
+            return
+        
+        resource_check = self.performance_monitor.check_resource_limits(
+            max_memory_mb=self.settings.memory_limit_mb,
+            max_cpu_percent=80.0  # 80% CPU threshold
+        )
+        
+        if resource_check['status'] == 'warning':
+            warning_info = {
+                'warning_type': 'Resource Usage',
+                'message': '; '.join(resource_check['warnings']),
+                'processed_symbols': self.stats['processed_symbols'],
+                'records_inserted': self.stats['total_records'],
+                'action': 'Continuing with processing'
+            }
+            
+            self.stats['warnings'].append(warning_info)
+            
+            # Send warning notification
+            await self.notification_manager.send_warning_notification(warning_info)
+    
+    async def _finalize_processing(self):
+        """Finalize processing and calculate final statistics"""
+        
+        self.stats['end_time'] = datetime.now()
+        self.performance_monitor.finish_processing()
+        
+        # Calculate derived statistics
+        if self.stats['start_time']:
+            duration = self.stats['end_time'] - self.stats['start_time']
+            self.stats['duration'] = duration.total_seconds() / 60  # minutes
+        
+        if self.stats['total_symbols'] > 0:
+            self.stats['success_rate'] = (self.stats['successful_symbols'] / self.stats['total_symbols']) * 100
+        else:
+            self.stats['success_rate'] = 0
+        
+        self.stats['completed_at'] = self.stats['end_time'].strftime('%Y-%m-%d %H:%M:%S IST')
+        
+        # Categorize records by type for reporting
+        minute_timeframes = ['1m', '3m', '5m', '15m', '30m', '1h']
+        self.stats['minute_data_records'] = sum(
+            self.stats['timeframe_stats'].get(tf, 0) for tf in minute_timeframes
+        )
+        self.stats['daily_data_records'] = self.stats['timeframe_stats'].get('D', 0)
+        
+        # Insert fetch summary into database
+        await self._insert_fetch_summary()
+        
+        # Log final statistics
+        await self._log_final_statistics()
+    
+    async def _insert_fetch_summary(self):
+        """Insert daily fetch summary into database"""
+        
+        try:
+            summary = FetchSummaryModel(
+                fetch_date=datetime.now().date(),
+                total_symbols=self.stats['total_symbols'],
+                successful_symbols=self.stats['successful_symbols'],
+                failed_symbols=self.stats['failed_symbols'],
+                total_records_inserted=self.stats['total_records'],
+                processing_time_minutes=int(self.stats.get('duration', 0)),
+                equity_symbols=self.stats['instrument_type_stats'].get('EQ', 0),
+                futures_symbols=self.stats['instrument_type_stats'].get('FUT', 0),
+                options_symbols=(
+                    self.stats['instrument_type_stats'].get('CE', 0) + 
+                    self.stats['instrument_type_stats'].get('PE', 0)
+                ),
+                index_symbols=self.stats['instrument_type_stats'].get('INDEX', 0),
+                minute_data_records=self.stats['minute_data_records'],
+                daily_data_records=self.stats['daily_data_records'],
+                created_at=datetime.now()
+            )
+            
+            await self.questdb_client.insert_fetch_summary(summary)
+            
+        except Exception as e:
+            logger.error(f"Error inserting fetch summary: {e}")
+    
+    async def _log_final_statistics(self):
+        """Log comprehensive final statistics"""
+        
+        logger.info("📊 Final Statistics:")
+        logger.info(f"  • Total Symbols: {self.stats['total_symbols']:,}")
+        logger.info(f"  • Successful: {self.stats['successful_symbols']:,}")
+        logger.info(f"  • Failed: {self.stats['failed_symbols']:,}")
+        logger.info(f"  • Success Rate: {self.stats['success_rate']:.1f}%")
+        logger.info(f"  • Total Records: {self.stats['total_records']:,}")
+        logger.info(f"  • Processing Time: {self.stats.get('duration', 0):.1f} minutes")
+        
+        # Log performance metrics
+        perf_summary = self.performance_monitor.get_metrics_summary(minutes=60)
+        if perf_summary:
+            logger.info("🔧 Performance Summary:")
+            logger.info(f"  • Avg Memory: {perf_summary.get('avg_memory_mb', 0):.1f} MB")
+            logger.info(f"  • Max Memory: {perf_summary.get('max_memory_mb', 0):.1f} MB")
+            logger.info(f"  • Avg CPU: {perf_summary.get('avg_cpu_percent', 0):.1f}%")
+            logger.info(f"  • Processing Rate: {perf_summary.get('processing_stats', {}).get('items_per_second', 0):.1f} symbols/sec")
+    
+    async def _handle_interruption(self):
+        """Handle graceful shutdown on interruption"""
+        
+        logger.info("🛑 Gracefully shutting down...")
+        
+        # Send interruption notification
+        if self.notification_manager.is_configured():
+            await self.notification_manager.send_custom_message(
+                f"⏹️ Historical data fetch interrupted\n"
+                f"📊 Processed {self.stats['processed_symbols']:,}/{self.stats['total_symbols']:,} symbols\n"
+                f"💾 Saved {self.stats['total_records']:,} records",
+                channels=['telegram']
+            )
+    
+    async def _handle_fatal_error(self, error: Exception):
+        """Handle fatal errors with comprehensive error reporting"""
+        
+        error_info = NotificationFormatter.create_error_summary(
+            error=error,
+            context={
+                'timestamp': datetime.now().isoformat(),
+                'processing_time': self._get_elapsed_time()
+            },
+            processed_items=self.stats['processed_symbols'],
+            saved_records=self.stats['total_records']
+        )
+        
+        # Send error notification
+        await self.notification_manager.send_error_notification(error_info)
+        
+        # Log error context
+        await self.async_logger.log_error_with_context(
+            error=error,
+            context={
+                'stats': self.stats,
+                'settings': {
+                    'total_symbols': self.stats['total_symbols'],
+                    'batch_size': self.settings.batch_size,
+                    'max_concurrent': self.settings.max_concurrent_requests
+                }
+            },
+            operation="historical_data_fetch"
+        )
+    
+    async def _cleanup_components(self):
+        """Cleanup all components and resources"""
+        
+        logger.info("🧹 Cleaning up components...")
+        
+        try:
+            # Stop performance monitoring
+            await self.performance_monitor.stop_monitoring()
+            
+            # Cleanup fetcher
+            await self.zerodha_fetcher.cleanup()
+            
+            # Cleanup database client
+            await self.questdb_client.cleanup()
+            
+            logger.info("✅ Cleanup completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+    
+    def _get_elapsed_time(self) -> str:
+        """Get elapsed time as formatted string"""
+        
+        if not self.stats['start_time']:
+            return "N/A"
+        
+        elapsed = datetime.now() - self.stats['start_time']
+        return NotificationFormatter.format_duration(elapsed.total_seconds())
+    
+    async def _get_system_info(self) -> Dict[str, Any]:
+        """Get system information for logging"""
+        
+        system_info = self.performance_monitor.get_system_info()
+        system_info.update({
+            'settings': {
+                'batch_size': self.settings.batch_size,
+                'max_concurrent_requests': self.settings.max_concurrent_requests,
+                'api_requests_per_second': self.settings.api_requests_per_second,
+                'historical_days_limit': self.settings.historical_days_limit,
+                'enabled_timeframes': self.settings.enabled_timeframes,
+                'enabled_instrument_types': self.settings.enabled_instrument_types,
+                'enabled_exchanges': self.settings.enabled_exchanges
+            }
+        })
+        
+        return system_info
+
+async def main():
+    """Main entry point"""
+    
+    try:
+        fetcher = HistoricalDataFetcher()
+        await fetcher.run()
+        
+    except KeyboardInterrupt:
+        logger.info("⏹️ Process interrupted by user")
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"💥 Unhandled exception: {e}")
+        logger.error(traceback.format_exc())
+        sys.exit(1)
+
+if __name__ == "__main__":
+    # Set up event loop policy for Windows compatibility
+    if sys.platform.startswith('win'):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
+    asyncio.run(main())
