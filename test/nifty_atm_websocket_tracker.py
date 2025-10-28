@@ -45,7 +45,7 @@ WS_PORT = int(os.getenv("OPENALGO_WS_PORT", "8765"))
 STRIKE_RANGE = 20        # strikes above and below ATM
 STRIKE_STEP = 50         # NIFTY strike step
 REFRESH_INTERVAL = 0.1   # 100ms between display updates (10 Hz - ultra fast)
-NIFTY_EXPIRY = "28OCT25" # Example expiry (adjust as needed)
+NIFTY_EXPIRY = "04NOV25" # Example expiry (adjust as needed)
 
 # Ultra-fast WebSocket configuration
 WEBSOCKET_PING_INTERVAL = 10      # 10 seconds between pings
@@ -862,11 +862,11 @@ class NiftyATMWebSocketTracker:
             actual_fps = 0
         self.last_display_time = current_time
 
-        # Column plan (wider OI/VOL to fit commas comfortably)
+        # Column plan (wider columns for bid/ask levels with @quantity format)
         colw = {
             "oi": 12, "vol": 11, "ltp": 8, "chg": 8, "bid": 8, "ask": 8, "strike": 7,
-            "bid1": 8, "bid2": 8, "bid3": 8, "bid4": 8, "bid5": 8,
-            "ask1": 8, "ask2": 8, "ask3": 8, "ask4": 8, "ask5": 8,
+            "bid1": 12, "bid2": 12, "bid3": 12, "bid4": 12, "bid5": 12,  # Wider for "price@qty" format
+            "ask1": 12, "ask2": 12, "ask3": 12, "ask4": 12, "ask5": 12,  # Wider for "price@qty" format
             "timestamp": 12  # For individual bid/ask levels and timestamp
         }
 
@@ -893,13 +893,17 @@ class NiftyATMWebSocketTracker:
         
         header = f"🧿 NIFTY OPTION CHAIN (WebSocket)  |  NIFTY: ₹{self.nifty_price:.2f}  |  ATM: {self.atm_strike}  |  Expiry: {self.current_expiry}  |  ⏰ {now}"
         perf_line = f"📊 Performance: {actual_fps:.1f} FPS | {msg_rate:.1f} msg/sec | {bytes_rate/1024:.1f} KB/sec | ATM Changes: {atm_changes} | Updates: {self.display_refresh_count:,}"
+        data_note = f"ℹ️  Left: CALL options (premiums ₹5-100) | Right: PUT options (premiums ₹5-100) | BID/ASK show market depth levels"
         
         print("=" * max(len(header), table_width))
         print(header)
         print(perf_line)
+        print(data_note)
         print("=" * max(len(header), table_width))
 
         print(calls_hdr + sep_gap + f"{'STRK':^{colw['strike']}}" + sep_gap + f"{'TIME':^{colw['timestamp']}}" + sep_gap + puts_hdr)
+        print("-" * (table_width + colw['timestamp'] + len(sep_gap)))
+        print(f"{'CALL OPTIONS (Left)':^{len(calls_hdr)}} | {'STRIKE':^{colw['strike']}} | {'TIME':^{colw['timestamp']}} | {'PUT OPTIONS (Right)':^{len(puts_hdr)}}")
         print("-" * (table_width + colw['timestamp'] + len(sep_gap)))
 
         # Build a map strike -> {CE, PE}
@@ -944,14 +948,28 @@ class NiftyATMWebSocketTracker:
                 bid_cols = []
                 for i in range(5):
                     if i < len(bid_levels) and bid_levels[i][1] > 0:  # Check quantity > 0
-                        bid_cols.append(f"{bid_levels[i][0]:.1f}@{bid_levels[i][1]}")
+                        # Format as "price@qty" with proper width
+                        price = bid_levels[i][0]
+                        qty = bid_levels[i][1]
+                        if qty >= 1000:
+                            qty_str = f"{qty/1000:.0f}K" if qty % 1000 == 0 else f"{qty/1000:.1f}K"
+                        else:
+                            qty_str = str(qty)
+                        bid_cols.append(f"{price:.1f}@{qty_str}")
                     else:
                         bid_cols.append("-")
                 
                 ask_cols = []
                 for i in range(5):
                     if i < len(ask_levels) and ask_levels[i][1] > 0:  # Check quantity > 0
-                        ask_cols.append(f"{ask_levels[i][0]:.1f}@{ask_levels[i][1]}")
+                        # Format as "price@qty" with proper width
+                        price = ask_levels[i][0]
+                        qty = ask_levels[i][1]
+                        if qty >= 1000:
+                            qty_str = f"{qty/1000:.0f}K" if qty % 1000 == 0 else f"{qty/1000:.1f}K"
+                        else:
+                            qty_str = str(qty)
+                        ask_cols.append(f"{price:.1f}@{qty_str}")
                     else:
                         ask_cols.append("-")
 
