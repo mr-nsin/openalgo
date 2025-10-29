@@ -3,14 +3,13 @@ import time
 from typing import Dict, List, Any, Optional
 from database.symbol import get_option_symbols_by_expiry
 from extensions import socketio
-from utils.plugin_loader import get_broker_auth_token, get_active_broker
 from services.websocket_service import subscribe_to_symbols, get_websocket_connection
 from services.market_data_service import MarketDataService
 import json
 
 logger = logging.getLogger(__name__)
 
-def get_option_chain_data(symbol: str, expiry: str, auth_token: str) -> Dict[str, Any]:
+def get_option_chain_data(symbol: str, expiry: str, auth_token: str, broker: str = None) -> Dict[str, Any]:
     """
     Get option chain data for a given symbol and expiry
     
@@ -80,7 +79,7 @@ def get_option_chain_data(symbol: str, expiry: str, auth_token: str) -> Dict[str
         logger.error(f"Error getting option chain data: {str(e)}")
         raise
 
-def subscribe_to_option_chain(symbol: str, expiry: str, auth_token: str, user_id: str) -> Dict[str, Any]:
+def subscribe_to_option_chain(symbol: str, expiry: str, auth_token: str, user_id: str, broker: str = None) -> Dict[str, Any]:
     """
     Subscribe to real-time option chain updates
     
@@ -129,18 +128,17 @@ def subscribe_to_option_chain(symbol: str, expiry: str, auth_token: str, user_id
                 'message': 'No valid symbols found for subscription'
             }
         
-        # Get active broker
-        active_broker = get_active_broker()
-        if not active_broker:
+        # Use provided broker or get from session
+        if not broker:
             return {
                 'status': 'error',
-                'message': 'No active broker found'
+                'message': 'Broker information required for subscription'
             }
         
         # Subscribe to symbols via WebSocket service
         success, response_data, status_code = subscribe_to_symbols(
             username=user_id,
-            broker=active_broker,
+            broker=broker,
             symbols=symbols_to_subscribe,
             mode="Quote"  # Use Quote mode for LTP, OI, and change data
         )

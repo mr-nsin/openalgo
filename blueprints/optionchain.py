@@ -88,7 +88,8 @@ def get_option_data():
             }), 401
         
         # Get option chain data
-        option_data = get_option_chain_data(symbol, expiry, auth_token)
+        broker = session.get('broker')
+        option_data = get_option_chain_data(symbol, expiry, auth_token, broker)
         
         return jsonify({
             'status': 'success',
@@ -130,7 +131,8 @@ def subscribe_option_chain():
             }), 401
         
         # Subscribe to option chain updates
-        subscription_result = subscribe_to_option_chain(symbol, expiry, auth_token, username)
+        broker = session.get('broker')
+        subscription_result = subscribe_to_option_chain(symbol, expiry, auth_token, username, broker)
         
         return jsonify({
             'status': 'success',
