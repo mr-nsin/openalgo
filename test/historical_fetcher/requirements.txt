@@ -1,13 +1,15 @@
-# Historical Data Fetcher Requirements
+# Enhanced Historical Data Fetcher Requirements
 # Core async and HTTP libraries
 asyncio
 asyncpg>=0.28.0
 aiohttp>=3.8.0
 aiosmtplib>=3.0.0
 
-# Data processing
+# Data processing and numerical computing
 pandas>=2.0.0
 numpy>=1.24.0
+numba>=0.58.0        # High-performance JIT compilation
+scipy>=1.11.0        # Scientific computing
 
 # Database
 questdb>=1.0.0
@@ -27,6 +29,21 @@ python-dotenv>=1.0.0
 # Utilities
 tenacity>=8.2.0
 psutil>=5.9.0
+
+# Mathematical libraries for options pricing
+# (math and statistics are built-in Python modules)
+
+# Optional: Advanced analytics and visualization
+scikit-learn>=1.3.0  # Machine learning indicators
+matplotlib>=3.7.0    # Plotting and visualization
+seaborn>=0.12.0      # Statistical visualization
+
+# Development and testing (optional)
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+black>=23.7.0
+isort>=5.12.0
+mypy>=1.5.0
 
 # OpenAlgo dependencies (should already be installed)
 # flask>=2.3.0

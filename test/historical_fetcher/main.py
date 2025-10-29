@@ -21,7 +21,7 @@ from config.settings import Settings, InstrumentType, TimeFrame
 from config.timeframes import TimeFrameConfig
 from fetchers.symbol_manager import SymbolManager
 from fetchers.zerodha_fetcher import ZerodhaHistoricalFetcher
-from database.questdb_client import QuestDBClient
+from database.optimized_questdb_client import OptimizedQuestDBClient
 from database.models import FetchSummaryModel
 from notifications.notification_manager import NotificationManager, NotificationFormatter
 from utils.async_logger import setup_async_logger
@@ -51,7 +51,7 @@ class HistoricalDataFetcher:
         # Initialize components
         self.symbol_manager = SymbolManager(self.settings)
         self.zerodha_fetcher = ZerodhaHistoricalFetcher(self.settings)
-        self.questdb_client = QuestDBClient(self.settings)
+        self.questdb_client = OptimizedQuestDBClient(self.settings)
         self.notification_manager = NotificationManager(self.settings)
         self.performance_monitor = PerformanceMonitor(
             collection_interval=60.0,
