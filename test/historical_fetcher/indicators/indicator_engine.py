@@ -19,9 +19,17 @@ import time
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from utils.logging import get_logger
-from config.settings import InstrumentType, TimeFrame
-from fetchers.symbol_manager import SymbolInfo
-from fetchers.zerodha_fetcher import HistoricalCandle
+from config.openalgo_settings import TimeFrame
+from fetchers.openalgo_zerodha_fetcher import SymbolInfo, HistoricalCandle
+from enum import Enum
+
+class InstrumentType(str, Enum):
+    """Instrument types for compatibility"""
+    EQUITY = "EQ"
+    FUTURES = "FUT"
+    CALL_OPTION = "CE"
+    PUT_OPTION = "PE"
+    INDEX = "INDEX"
 from indicators.numba_indicators import NumbaIndicators, TimeFrameOptimizedIndicators, NumbaOptimizer
 from indicators.options_greeks import OptionsGreeksCalculator, ImpliedVolatilityCalculator, AdvancedGreeks
 from database.enhanced_schemas import TimeFrameCode, OptionTypeCode

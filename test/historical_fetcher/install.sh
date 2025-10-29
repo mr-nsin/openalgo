@@ -231,7 +231,7 @@ Type=oneshot
 User=$CURRENT_USER
 WorkingDirectory=$CURRENT_DIR
 Environment=PATH=$CURRENT_DIR/venv/bin
-ExecStart=$CURRENT_DIR/venv/bin/python main.py
+ExecStart=$CURRENT_DIR/venv/bin/python openalgo_main.py
 StandardOutput=append:$CURRENT_DIR/logs/service.log
 StandardError=append:$CURRENT_DIR/logs/service.log
 
@@ -278,7 +278,7 @@ elif [[ -f "venv/Scripts/activate" ]]; then
 fi
 
 # Run the fetcher
-python main.py "$@"
+python openalgo_main.py "$@"
 EOF
 
 chmod +x run.sh

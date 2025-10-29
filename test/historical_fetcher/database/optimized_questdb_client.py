@@ -16,32 +16,41 @@ import time
 # Add the OpenAlgo root directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
-from utils.logging import get_logger
-from config.settings import Settings, InstrumentType, TimeFrame
-from fetchers.symbol_manager import SymbolInfo
-from fetchers.zerodha_fetcher import HistoricalCandle
+from loguru import logger
+from config.openalgo_settings import OpenAlgoSettings
+from config.openalgo_settings import TimeFrame
+from enum import Enum
+
+class InstrumentType(str, Enum):
+    """Instrument types for compatibility"""
+    EQUITY = "EQ"
+    FUTURES = "FUT"
+    CALL_OPTION = "CE"
+    PUT_OPTION = "PE"
+    INDEX = "INDEX"
+from fetchers.openalgo_zerodha_fetcher import SymbolInfo, HistoricalCandle
 from database.table_manager import (
     DynamicTableManager, TimeFrameCode, TableNamingStrategy,
     OptionsTableOptimizer, TableMaintenanceUtils
 )
 from database.enhanced_schemas import EnhancedTableSchemas
 from indicators.indicator_engine import IndicatorEngine, CalculationConfig, IndicatorResult
-
-logger = get_logger(__name__)
+from utils.async_logger import AsyncLogger
 
 class OptimizedQuestDBClient:
     """
     Optimized QuestDB client with symbol-specific tables and numeric timeframes
     """
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: OpenAlgoSettings, async_logger: Optional[AsyncLogger] = None):
         self.settings = settings
         self.pool: Optional[asyncpg.Pool] = None
+        self._async_logger = async_logger
         
         # Table management
         self.table_manager: Optional[DynamicTableManager] = None
         
-        # Indicator calculation engine
+        # Indicator calculation engine (optimized)
         self.indicator_engine = IndicatorEngine(CalculationConfig(
             calculate_greeks=True,
             calculate_iv=True,
@@ -49,9 +58,14 @@ class OptimizedQuestDBClient:
             max_workers=4
         ))
         
-        # Performance optimization
-        self.batch_insert_size = 1000
-        self.connection_pool_size = 20
+        # Performance optimization - increased batch sizes for better throughput
+        self.batch_insert_size = 2000  # Increased from 1000
+        self.connection_pool_size = 30  # Increased from 20
+        self.preferred_batch_size = 5000  # For large inserts
+        
+        # Connection pool optimization
+        self.pool_min_size = 10
+        self.pool_max_size = self.connection_pool_size
         
         # Statistics
         self.stats = {
@@ -60,11 +74,14 @@ class OptimizedQuestDBClient:
             'failed_inserts': 0,
             'total_records_inserted': 0,
             'tables_created': 0,
-            'connection_errors': 0
+            'connection_errors': 0,
+            'cache_hits': 0,
+            'batch_operations': 0
         }
         
-        # Cache for table existence checks
-        self.table_existence_cache: Dict[str, bool] = {}
+        # Cache for table existence checks (with TTL)
+        self.table_existence_cache: Dict[str, Tuple[bool, float]] = {}  # (exists, timestamp)
+        self.cache_ttl = 300  # 5 minutes
     
     async def connect(self):
         """Initialize connection pool and table manager"""
@@ -74,11 +91,13 @@ class OptimizedQuestDBClient:
                 'host': self.settings.questdb_host,
                 'port': self.settings.questdb_port,
                 'database': self.settings.questdb_database,
-                'min_size': 5,
-                'max_size': self.connection_pool_size,
-                'command_timeout': 120,  # Increased timeout for large operations
+                'min_size': self.pool_min_size,
+                'max_size': self.pool_max_size,
+                'command_timeout': 180,  # Increased timeout for large operations
+                'max_queries': 50000,  # Increase query cache
                 'server_settings': {
-                    'application_name': 'optimized_historical_fetcher'
+                    'application_name': 'optimized_historical_fetcher',
+                    'statement_cache_size': 200,  # Cache prepared statements
                 }
             }
             
@@ -100,9 +119,25 @@ class OptimizedQuestDBClient:
             
             logger.info(f"Connected to QuestDB at {self.settings.questdb_host}:{self.settings.questdb_port}")
             
+            if self._async_logger:
+                await self._async_logger.log_database_operation(
+                    operation='connect',
+                    table_name='questdb',
+                    records_count=0,
+                    execution_time=0.0,
+                    status='success'
+                )
+            
         except Exception as e:
             self.stats['connection_errors'] += 1
-            logger.error(f"Failed to connect to QuestDB: {e}")
+            logger.exception(f"Failed to connect to QuestDB: {e}")
+            
+            if self._async_logger:
+                await self._async_logger.log_error_with_context(
+                    error=e,
+                    context={'operation': 'connect_questdb'},
+                    operation='connect'
+                )
             raise
     
     async def upsert_historical_data_with_indicators(

@@ -1,8 +1,8 @@
 """
-Historical Data Fetcher - Main Orchestrator
+OpenAlgo-Integrated Historical Data Fetcher - Main Orchestrator
 
-Coordinates the entire historical data fetching process with comprehensive
-error handling, progress tracking, and notification system.
+This is the main entry point for the historical data fetcher that integrates
+with OpenAlgo's existing infrastructure, database, and authentication system.
 """
 
 import asyncio
@@ -16,29 +16,45 @@ import time
 # Add the OpenAlgo root directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from utils.logging import get_logger
-from config.settings import Settings, InstrumentType, TimeFrame
-from config.timeframes import TimeFrameConfig
-from fetchers.symbol_manager import SymbolManager
-from fetchers.zerodha_fetcher import ZerodhaHistoricalFetcher
+from loguru import logger
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    # Try to load from historical_fetcher directory first, then from OpenAlgo root
+    env_paths = [
+        os.path.join(os.path.dirname(__file__), '.env'),
+        os.path.join(os.path.dirname(__file__), '..', '..', '.env')
+    ]
+    
+    for env_path in env_paths:
+        if os.path.exists(env_path):
+            load_dotenv(dotenv_path=env_path, override=False)
+            logger.info(f"Loaded environment variables from: {env_path}")
+            break
+    else:
+        logger.warning("No .env file found. Using system environment variables only.")
+        
+except ImportError:
+    logger.warning("python-dotenv not installed. Using system environment variables only.")
+from config.openalgo_settings import OpenAlgoSettings, InstrumentType, TimeFrame
+from fetchers.openalgo_zerodha_fetcher import OpenAlgoZerodhaHistoricalFetcher, OpenAlgoSymbolManager
 from database.optimized_questdb_client import OptimizedQuestDBClient
 from database.models import FetchSummaryModel
 from notifications.notification_manager import NotificationManager, NotificationFormatter
 from utils.async_logger import setup_async_logger
 from utils.performance_monitor import PerformanceMonitor, AsyncTimer
 
-logger = get_logger(__name__)
-
-class HistoricalDataFetcher:
+class OpenAlgoHistoricalDataFetcher:
     """
-    Main orchestrator for historical data fetching process
+    Main orchestrator for historical data fetching process integrated with OpenAlgo
     """
     
     def __init__(self):
-        """Initialize the historical data fetcher"""
+        """Initialize the historical data fetcher with OpenAlgo integration"""
         
         # Load configuration
-        self.settings = Settings()
+        self.settings = OpenAlgoSettings()
         
         # Setup async logging
         self.async_logger = setup_async_logger(
@@ -48,10 +64,10 @@ class HistoricalDataFetcher:
             retention=self.settings.log_retention
         )
         
-        # Initialize components
-        self.symbol_manager = SymbolManager(self.settings)
-        self.zerodha_fetcher = ZerodhaHistoricalFetcher(self.settings)
-        self.questdb_client = OptimizedQuestDBClient(self.settings)
+        # Initialize components with async logger
+        self.symbol_manager = OpenAlgoSymbolManager(self.settings)
+        self.zerodha_fetcher = OpenAlgoZerodhaHistoricalFetcher(self.settings)
+        self.questdb_client = OptimizedQuestDBClient(self.settings, async_logger=self.async_logger)
         self.notification_manager = NotificationManager(self.settings)
         self.performance_monitor = PerformanceMonitor(
             collection_interval=60.0,
@@ -82,7 +98,7 @@ class HistoricalDataFetcher:
         """Main execution method"""
         
         try:
-            logger.info("🚀 Starting Historical Data Fetcher")
+            logger.info("🚀 Starting OpenAlgo Historical Data Fetcher")
             await self.async_logger.log_system_metrics(await self._get_system_info())
             
             # Initialize all components
@@ -107,7 +123,7 @@ class HistoricalDataFetcher:
             # Send initial notification if configured
             if self.notification_manager.is_configured():
                 await self.notification_manager.send_custom_message(
-                    f"🚀 Historical data fetch started\n"
+                    f"🚀 OpenAlgo Historical data fetch started\n"
                     f"📊 Processing {total_symbols:,} symbols across {len(symbols_by_type)} instrument types",
                     channels=['telegram']
                 )
@@ -117,7 +133,7 @@ class HistoricalDataFetcher:
                 if not symbols:
                     continue
                 
-                logger.info(f"🔄 Processing {instrument_type.value} symbols ({len(symbols):,} symbols)")
+                logger.info(f"🔄 Processing {instrument_type} symbols ({len(symbols):,} symbols)")
                 await self._process_instrument_type(instrument_type, symbols)
             
             # Finalize processing
@@ -126,15 +142,14 @@ class HistoricalDataFetcher:
             # Send success notification
             await self.notification_manager.send_success_notification(self.stats)
             
-            logger.info("✅ Historical data fetch completed successfully")
+            logger.info("✅ OpenAlgo Historical data fetch completed successfully")
             
         except KeyboardInterrupt:
             logger.info("⏹️ Process interrupted by user")
             await self._handle_interruption()
             
         except Exception as e:
-            logger.error(f"💥 Fatal error in historical data fetcher: {e}")
-            logger.error(traceback.format_exc())
+            logger.exception(f"💥 Fatal error in historical data fetcher: {e}")
             
             await self._handle_fatal_error(e)
             raise
@@ -145,10 +160,10 @@ class HistoricalDataFetcher:
     async def _initialize_components(self):
         """Initialize all components and verify connections"""
         
-        logger.info("🔗 Initializing components...")
+        logger.info("🔗 Initializing OpenAlgo components...")
         
-        # Initialize Zerodha fetcher
-        await self.zerodha_fetcher.initialize()
+        # Initialize Zerodha fetcher with async logger
+        await self.zerodha_fetcher.initialize(async_logger=self.async_logger)
         
         # Connect to QuestDB and create tables
         await self.questdb_client.connect()
@@ -163,14 +178,14 @@ class HistoricalDataFetcher:
                 else:
                     logger.warning(f"⚠️ {channel.title()} notification connection failed")
         
-        logger.info("✅ All components initialized successfully")
+        logger.info("✅ All OpenAlgo components initialized successfully")
     
-    async def _log_symbol_breakdown(self, symbols_by_type: Dict[InstrumentType, List]):
+    async def _log_symbol_breakdown(self, symbols_by_type: Dict[str, List]):
         """Log detailed symbol breakdown"""
         
         for instrument_type, symbols in symbols_by_type.items():
             count = len(symbols)
-            self.stats['instrument_type_stats'][instrument_type.value] = count
+            self.stats['instrument_type_stats'][instrument_type] = count
             
             if count > 0:
                 # Get exchange breakdown for this instrument type
@@ -179,7 +194,7 @@ class HistoricalDataFetcher:
                     exchange = symbol.exchange
                     exchange_breakdown[exchange] = exchange_breakdown.get(exchange, 0) + 1
                 
-                logger.info(f"  • {instrument_type.value}: {count:,} symbols")
+                logger.info(f"  • {instrument_type}: {count:,} symbols")
                 for exchange, ex_count in exchange_breakdown.items():
                     logger.info(f"    - {exchange}: {ex_count:,}")
                     
@@ -188,7 +203,7 @@ class HistoricalDataFetcher:
                         self.stats['exchange_stats'].get(exchange, 0) + ex_count
                     )
     
-    async def _process_instrument_type(self, instrument_type: InstrumentType, symbols: List):
+    async def _process_instrument_type(self, instrument_type: str, symbols: List):
         """Process all symbols for a specific instrument type"""
         
         # Process symbols in batches with concurrency control
@@ -202,7 +217,7 @@ class HistoricalDataFetcher:
             
             logger.info(
                 f"📦 Processing batch {batch_num}/{total_batches} "
-                f"({len(batch)} symbols) for {instrument_type.value}"
+                f"({len(batch)} symbols) for {instrument_type}"
             )
             
             # Process batch concurrently
@@ -247,7 +262,7 @@ class HistoricalDataFetcher:
                 # Log symbol processing
                 await self.async_logger.log_symbol_processing(
                     symbol=symbol_info.symbol,
-                    instrument_type=symbol_info.instrument_type.value,
+                    instrument_type=symbol_info.instrument_type,
                     timeframe="all",
                     records_count=records_inserted,
                     processing_time=processing_time,
@@ -255,7 +270,7 @@ class HistoricalDataFetcher:
                 )
                 
                 logger.debug(
-                    f"✅ {symbol_info.symbol} ({symbol_info.instrument_type.value}): "
+                    f"✅ {symbol_info.symbol} ({symbol_info.instrument_type}): "
                     f"{records_inserted:,} records in {processing_time:.2f}s"
                 )
                 
@@ -267,7 +282,7 @@ class HistoricalDataFetcher:
                 error_info = {
                     'symbol': symbol_info.symbol,
                     'exchange': symbol_info.exchange,
-                    'instrument_type': symbol_info.instrument_type.value,
+                    'instrument_type': symbol_info.instrument_type,
                     'error': str(e),
                     'processing_time': processing_time
                 }
@@ -276,7 +291,7 @@ class HistoricalDataFetcher:
                 # Log error
                 await self.async_logger.log_symbol_processing(
                     symbol=symbol_info.symbol,
-                    instrument_type=symbol_info.instrument_type.value,
+                    instrument_type=symbol_info.instrument_type,
                     timeframe="all",
                     records_count=0,
                     processing_time=processing_time,
@@ -285,7 +300,7 @@ class HistoricalDataFetcher:
                 
                 logger.error(
                     f"❌ Error processing {symbol_info.symbol} "
-                    f"({symbol_info.instrument_type.value}) after {processing_time:.2f}s: {e}"
+                    f"({symbol_info.instrument_type}) after {processing_time:.2f}s: {e}"
                 )
             
             finally:
@@ -305,7 +320,7 @@ class HistoricalDataFetcher:
         timeframes = self.settings.get_timeframe_objects()
         
         # Process timeframes in priority order (daily first, then intraday)
-        ordered_timeframes = TimeFrameConfig.get_processing_order(timeframes)
+        ordered_timeframes = self._get_processing_order(timeframes)
         
         for timeframe in ordered_timeframes:
             try:
@@ -362,7 +377,7 @@ class HistoricalDataFetcher:
                         )
             
             except Exception as e:
-                logger.error(f"❌ Error fetching {symbol_info.symbol} ({timeframe.value}): {e}")
+                logger.exception(f"❌ Error fetching {symbol_info.symbol} ({timeframe.value}): {e}")
                 
                 await self.questdb_client.update_fetch_status(
                     symbol_info,
@@ -373,6 +388,29 @@ class HistoricalDataFetcher:
                 )
         
         return total_records
+    
+    def _get_processing_order(self, timeframes: List[TimeFrame]) -> List[TimeFrame]:
+        """Get timeframes in processing order (daily first, then intraday)"""
+        daily_timeframes = [tf for tf in timeframes if tf == TimeFrame.DAILY]
+        intraday_timeframes = [tf for tf in timeframes if tf != TimeFrame.DAILY]
+        
+        # Sort intraday timeframes by duration (longest first)
+        intraday_timeframes.sort(key=lambda x: self._get_timeframe_minutes(x), reverse=True)
+        
+        return daily_timeframes + intraday_timeframes
+    
+    def _get_timeframe_minutes(self, timeframe: TimeFrame) -> int:
+        """Get timeframe duration in minutes"""
+        timeframe_minutes = {
+            TimeFrame.MINUTE_1: 1,
+            TimeFrame.MINUTE_3: 3,
+            TimeFrame.MINUTE_5: 5,
+            TimeFrame.MINUTE_15: 15,
+            TimeFrame.MINUTE_30: 30,
+            TimeFrame.HOUR_1: 60,
+            TimeFrame.DAILY: 1440
+        }
+        return timeframe_minutes.get(timeframe, 1)
     
     async def _get_date_range(self, symbol_info, timeframe: TimeFrame) -> tuple:
         """Get appropriate date range for fetching historical data"""
@@ -535,7 +573,7 @@ class HistoricalDataFetcher:
         # Send interruption notification
         if self.notification_manager.is_configured():
             await self.notification_manager.send_custom_message(
-                f"⏹️ Historical data fetch interrupted\n"
+                f"⏹️ OpenAlgo Historical data fetch interrupted\n"
                 f"📊 Processed {self.stats['processed_symbols']:,}/{self.stats['total_symbols']:,} symbols\n"
                 f"💾 Saved {self.stats['total_records']:,} records",
                 channels=['telegram']
@@ -568,13 +606,13 @@ class HistoricalDataFetcher:
                     'max_concurrent': self.settings.max_concurrent_requests
                 }
             },
-            operation="historical_data_fetch"
+            operation="openalgo_historical_data_fetch"
         )
     
     async def _cleanup_components(self):
         """Cleanup all components and resources"""
         
-        logger.info("🧹 Cleaning up components...")
+        logger.info("🧹 Cleaning up OpenAlgo components...")
         
         try:
             # Stop performance monitoring
@@ -586,7 +624,7 @@ class HistoricalDataFetcher:
             # Cleanup database client
             await self.questdb_client.cleanup()
             
-            logger.info("✅ Cleanup completed successfully")
+            logger.info("✅ OpenAlgo cleanup completed successfully")
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -622,7 +660,7 @@ async def main():
     """Main entry point"""
     
     try:
-        fetcher = HistoricalDataFetcher()
+        fetcher = OpenAlgoHistoricalDataFetcher()
         await fetcher.run()
         
     except KeyboardInterrupt:

@@ -1,26 +1,34 @@
-# Historical Data Fetcher Configuration Template
+# OpenAlgo-Integrated Historical Data Fetcher Configuration Template
 # Copy this file to .env and fill in your actual values
+# This configuration integrates with OpenAlgo's existing environment variables
 
 # =============================================================================
-# QuestDB Configuration
+# OpenAlgo Integration
+# =============================================================================
+# The historical fetcher reuses OpenAlgo's existing configuration
+# Make sure these match your main OpenAlgo .env file
+
+# OpenAlgo Database (for symtoken table and authentication)
+# This should match your main OpenAlgo .env file
+DATABASE_URL=sqlite:///db/openalgo.db
+
+# OpenAlgo Broker Configuration (reused for historical data)
+# These should match your main OpenAlgo .env file
+BROKER_API_KEY=your_zerodha_api_key_here
+BROKER_API_SECRET=your_zerodha_access_token_here
+
+# Note: The historical fetcher uses OpenAlgo's authentication system
+# It will automatically get the auth token from OpenAlgo's database
+# If no token is found, it will use BROKER_API_KEY and BROKER_API_SECRET directly
+
+# =============================================================================
+# QuestDB Configuration (for historical data storage)
 # =============================================================================
 HIST_FETCHER_QUESTDB_HOST=localhost
 HIST_FETCHER_QUESTDB_PORT=9000
 HIST_FETCHER_QUESTDB_USERNAME=
 HIST_FETCHER_QUESTDB_PASSWORD=
 HIST_FETCHER_QUESTDB_DATABASE=qdb
-
-# =============================================================================
-# OpenAlgo Database (for symtoken table)
-# =============================================================================
-# This should match your OpenAlgo DATABASE_URL
-DATABASE_URL=sqlite:///db/openalgo.db
-
-# =============================================================================
-# Zerodha API Configuration
-# =============================================================================
-HIST_FETCHER_ZERODHA_API_KEY=your_zerodha_api_key_here
-HIST_FETCHER_ZERODHA_ACCESS_TOKEN=your_zerodha_access_token_here
 
 # =============================================================================
 # Processing Configuration
@@ -46,15 +54,16 @@ HIST_FETCHER_ENABLED_EXCHANGES=NSE,BSE,NFO,BFO,NSE_INDEX,BSE_INDEX
 # HIST_FETCHER_START_DATE_OVERRIDE=2024-01-01
 
 # =============================================================================
-# Telegram Notifications
+# Notification Configuration (Optional - integrates with OpenAlgo)
 # =============================================================================
-HIST_FETCHER_TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-# JSON array format: ["chat_id_1","chat_id_2"]
-HIST_FETCHER_TELEGRAM_CHAT_IDS=["your_chat_id_here"]
+# The historical fetcher can reuse OpenAlgo's notification system
+# If you have notifications configured in OpenAlgo, they will be used automatically
 
-# =============================================================================
-# Email Notifications
-# =============================================================================
+# Telegram Notifications (reuses OpenAlgo's TELEGRAM_BOT_TOKEN if available)
+# HIST_FETCHER_TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+# HIST_FETCHER_TELEGRAM_CHAT_IDS=["your_chat_id_here"]
+
+# Email Notifications (optional, separate from OpenAlgo)
 HIST_FETCHER_SMTP_HOST=smtp.gmail.com
 HIST_FETCHER_SMTP_PORT=587
 HIST_FETCHER_SMTP_USERNAME=your_email@gmail.com
@@ -77,10 +86,14 @@ HIST_FETCHER_ENABLE_PERFORMANCE_MONITORING=true
 HIST_FETCHER_MEMORY_LIMIT_MB=4096
 
 # =============================================================================
-# Notes:
+# OpenAlgo Integration Notes:
 # =============================================================================
-# 1. Zerodha API credentials can be obtained from your Kite Connect app
-# 2. For Telegram notifications, create a bot via @BotFather and get your chat ID
-# 3. For Gmail, use an App Password instead of your regular password
-# 4. QuestDB should be running before starting the fetcher
-# 5. Adjust batch sizes and concurrency based on your system capabilities
+# 1. This historical fetcher integrates with OpenAlgo's existing infrastructure
+# 2. It reuses OpenAlgo's database (symtoken table) and authentication system
+# 3. Zerodha API credentials are taken from OpenAlgo's BROKER_API_KEY and BROKER_API_SECRET
+# 4. The fetcher uses OpenAlgo's existing Zerodha API implementation
+# 5. QuestDB should be running before starting the fetcher
+# 6. Adjust batch sizes and concurrency based on your system capabilities
+# 7. The fetcher automatically discovers symbols from OpenAlgo's database
+# 8. For Telegram notifications, it can reuse OpenAlgo's TELEGRAM_BOT_TOKEN if configured
+# 9. For Gmail, use an App Password instead of your regular password

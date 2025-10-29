@@ -18,8 +18,17 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from utils.logging import get_logger
-from config.settings import InstrumentType, TimeFrame
-from fetchers.symbol_manager import SymbolInfo
+from config.openalgo_settings import TimeFrame
+from fetchers.openalgo_zerodha_fetcher import SymbolInfo
+from enum import Enum
+
+class InstrumentType(str, Enum):
+    """Instrument types for compatibility"""
+    EQUITY = "EQ"
+    FUTURES = "FUT"
+    CALL_OPTION = "CE"
+    PUT_OPTION = "PE"
+    INDEX = "INDEX"
 from database.enhanced_schemas import EnhancedTableSchemas
 
 logger = get_logger(__name__)

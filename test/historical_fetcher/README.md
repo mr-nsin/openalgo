@@ -158,10 +158,10 @@ HIST_FETCHER_BATCH_SIZE=100 ./run.sh
 ### Python API
 
 ```python
-from main import HistoricalDataFetcher
+from openalgo_main import OpenAlgoHistoricalDataFetcher
 
 # Create and run fetcher
-fetcher = HistoricalDataFetcher()
+fetcher = OpenAlgoHistoricalDataFetcher()
 await fetcher.run()
 ```
 
@@ -216,7 +216,7 @@ historical_fetcher/
 ├── notifications/    # Telegram and email alerts
 ├── utils/           # Utilities (logging, rate limiting)
 ├── scheduler/       # Market-aware job scheduling
-└── main.py          # Main orchestrator
+└── openalgo_main.py # Main orchestrator (OpenAlgo integrated)
 ```
 
 ### Data Flow
@@ -287,12 +287,12 @@ HIST_FETCHER_LOG_LEVEL=DEBUG ./run.sh
 
 # Test specific components
 python -c "
-from config.settings import Settings
+from config.openalgo_settings import OpenAlgoSettings
 from database.questdb_client import QuestDBClient
 import asyncio
 
 async def test():
-    settings = Settings()
+    settings = OpenAlgoSettings()
     client = QuestDBClient(settings)
     await client.connect()
     print('QuestDB connection successful')

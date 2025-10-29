@@ -13,7 +13,7 @@ from typing import Dict, Any, List, Optional
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 from utils.logging import get_logger
-from config.settings import Settings
+from config.openalgo_settings import OpenAlgoSettings
 from notifications.telegram_notifier import TelegramNotifier
 from notifications.email_notifier import EmailNotifier
 
@@ -24,7 +24,7 @@ class NotificationManager:
     Manages multiple notification channels with unified interface
     """
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: OpenAlgoSettings):
         """
         Initialize notification manager
         

@@ -21,18 +21,18 @@ from typing import Dict, Any, Optional, List
 # Add the OpenAlgo root directory to Python path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
-from utils.logging import get_logger
-from config.settings import Settings
+from loguru import logger
+from config.openalgo_settings import OpenAlgoSettings
 from scheduler.market_calendar import MarketCalendar
 
-logger = get_logger(__name__)
+# Using loguru logger directly
 
 class HistoricalDataScheduler:
     """
     Market-aware scheduler for historical data fetching
     """
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: OpenAlgoSettings):
         """
         Initialize scheduler with market calendar integration
         
@@ -211,10 +211,10 @@ class HistoricalDataScheduler:
         
         try:
             # Import here to avoid circular imports
-            from main import HistoricalDataFetcher
+            from openalgo_main import OpenAlgoHistoricalDataFetcher
             
             # Create fetcher with default settings
-            fetcher = HistoricalDataFetcher()
+            fetcher = OpenAlgoHistoricalDataFetcher()
             
             # Override settings for daily fetch
             fetcher.settings.historical_days_limit = 5  # Last 5 days for daily fetch
@@ -240,10 +240,10 @@ class HistoricalDataScheduler:
         logger.info("🚀 Starting scheduled weekend full sync")
         
         try:
-            from main import HistoricalDataFetcher
+            from openalgo_main import OpenAlgoHistoricalDataFetcher
             
             # Create fetcher with extended settings for full sync
-            fetcher = HistoricalDataFetcher()
+            fetcher = OpenAlgoHistoricalDataFetcher()
             
             # Override settings for full sync
             fetcher.settings.historical_days_limit = 365  # Full year for weekend sync
@@ -275,10 +275,10 @@ class HistoricalDataScheduler:
         logger.info("🔄 Starting intraday historical data update")
         
         try:
-            from main import HistoricalDataFetcher
+            from openalgo_main import OpenAlgoHistoricalDataFetcher
             
             # Create fetcher with minimal settings for intraday
-            fetcher = HistoricalDataFetcher()
+            fetcher = OpenAlgoHistoricalDataFetcher()
             
             # Override settings for intraday updates
             fetcher.settings.historical_days_limit = 1  # Only today
@@ -330,9 +330,9 @@ class HistoricalDataScheduler:
         logger.info(f"🎯 Starting custom historical data fetch: {config}")
         
         try:
-            from main import HistoricalDataFetcher
+            from openalgo_main import OpenAlgoHistoricalDataFetcher
             
-            fetcher = HistoricalDataFetcher()
+            fetcher = OpenAlgoHistoricalDataFetcher()
             
             # Apply custom configuration if provided
             if config:
