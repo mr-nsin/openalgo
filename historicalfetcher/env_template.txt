@@ -1,0 +1,187 @@
+# OpenAlgo Historical Data Fetcher Environment Configuration
+# This template shows the required environment variables for the historical data fetcher
+
+# ============================================================================
+# OPENALGO API CONFIGURATION (REQUIRED)
+# ============================================================================
+# These are the primary credentials needed to authenticate with OpenAlgo
+# The historical fetcher uses OpenAlgo's API layer, NOT direct broker APIs
+
+# OpenAlgo API Key - Generated from OpenAlgo web interface
+# This key is used to authenticate with OpenAlgo and fetch historical data
+# through OpenAlgo's unified API layer
+OPENALGO_API_KEY=your_openalgo_api_key_here
+
+# OpenAlgo API Host - URL where your OpenAlgo instance is running
+OPENALGO_API_HOST=http://127.0.0.1:5000
+
+# OpenAlgo Database URL - Connection to OpenAlgo's symbol database
+# This should match your main OpenAlgo DATABASE_URL setting
+DATABASE_URL=sqlite:///db/openalgo.db
+
+# ============================================================================
+# QUESTDB CONFIGURATION (HISTORICAL DATA STORAGE)
+# ============================================================================
+# QuestDB is used to store the fetched historical data for fast time-series queries
+
+HIST_FETCHER_QUESTDB_HOST=localhost
+HIST_FETCHER_QUESTDB_PORT=9000
+HIST_FETCHER_QUESTDB_USERNAME=
+HIST_FETCHER_QUESTDB_PASSWORD=
+HIST_FETCHER_QUESTDB_DATABASE=qdb
+
+# ============================================================================
+# DATA FETCHING CONFIGURATION
+# ============================================================================
+# Configure what data to fetch and how to fetch it
+
+# Timeframes to fetch (comma-separated)
+# Supported: 1m, 3m, 5m, 15m, 30m, 1h, D
+HIST_FETCHER_ENABLED_TIMEFRAMES=1m,5m,15m,1h,D
+
+# Instrument types to fetch (comma-separated)
+# Supported: EQ, FUT, CE, PE, INDEX
+HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=EQ,FUT,CE,PE,INDEX
+
+# Exchanges to include (comma-separated)
+HIST_FETCHER_ENABLED_EXCHANGES=NSE,BSE,NFO,BFO,NSE_INDEX,BSE_INDEX
+
+# Historical data range (days from today)
+HIST_FETCHER_HISTORICAL_DAYS_LIMIT=365
+
+# Optional: Override start date (YYYY-MM-DD format)
+# If set, this overrides HISTORICAL_DAYS_LIMIT
+HIST_FETCHER_START_DATE_OVERRIDE=
+
+# ============================================================================
+# PERFORMANCE CONFIGURATION
+# ============================================================================
+# Configure processing performance and rate limiting
+
+# API requests per second (respect broker limits)
+HIST_FETCHER_API_REQUESTS_PER_SECOND=3
+
+# Maximum concurrent requests
+HIST_FETCHER_MAX_CONCURRENT_REQUESTS=5
+
+# Batch size for processing symbols
+HIST_FETCHER_BATCH_SIZE=50
+
+# Memory limit in MB
+HIST_FETCHER_MEMORY_LIMIT_MB=4096
+
+# Enable performance monitoring
+HIST_FETCHER_ENABLE_PERFORMANCE_MONITORING=true
+
+# ============================================================================
+# NOTIFICATION CONFIGURATION (OPTIONAL)
+# ============================================================================
+# Configure notifications for fetch status updates
+
+# ============================================================================
+# TELEGRAM NOTIFICATION CONFIGURATION (OPTIONAL)
+# ============================================================================
+# Configure Telegram notifications for real-time updates and alerts
+# This reuses OpenAlgo's existing Telegram bot configuration
+
+# Telegram Bot Token - Get this from @BotFather on Telegram
+# 1. Message @BotFather on Telegram
+# 2. Create a new bot with /newbot command
+# 3. Copy the bot token provided
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
+
+# Telegram Chat IDs - List of chat IDs to send notifications to
+# Format: Comma-separated list without spaces
+# To get your chat ID:
+# 1. Message your bot or add it to a group
+# 2. Visit: https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates
+# 3. Look for "chat":{"id": YOUR_CHAT_ID} in the response
+# Examples:
+#   Single user: TELEGRAM_CHAT_IDS=123456789
+#   Multiple users: TELEGRAM_CHAT_IDS=123456789,987654321
+#   Group chat: TELEGRAM_CHAT_IDS=-1001234567890
+TELEGRAM_CHAT_IDS=your_chat_id_here
+
+# ============================================================================
+# EMAIL NOTIFICATION CONFIGURATION (OPTIONAL)
+# ============================================================================
+# Configure email notifications for detailed reports and summaries
+
+# Email Configuration (optional)
+HIST_FETCHER_SMTP_HOST=smtp.gmail.com
+HIST_FETCHER_SMTP_PORT=587
+HIST_FETCHER_SMTP_USERNAME=your_email@gmail.com
+HIST_FETCHER_SMTP_PASSWORD=your_app_password
+HIST_FETCHER_EMAIL_RECIPIENTS=["recipient@example.com"]
+
+# ============================================================================
+# NOTIFICATION BEHAVIOR NOTES:
+# ============================================================================
+# 
+# 1. TELEGRAM NOTIFICATIONS:
+#    - Real-time progress updates during data fetching
+#    - Success/completion notifications with statistics
+#    - Error alerts with context and troubleshooting info
+#    - Warning notifications for non-critical issues
+# 
+# 2. EMAIL NOTIFICATIONS:
+#    - Detailed summary reports with comprehensive statistics
+#    - Error notifications with full stack traces
+#    - Final completion reports with data analysis
+#    - Less frequent than Telegram to avoid spam
+# 
+# 3. NOTIFICATION TRIGGERS:
+#    - Fetch process start/completion
+#    - Errors during data fetching or processing
+#    - Database connection issues
+#    - API rate limit warnings
+#    - Memory/performance alerts
+# 
+# 4. CONFIGURATION TIPS:
+#    - Use Telegram for real-time monitoring
+#    - Use Email for detailed reports and record-keeping
+#    - Both are optional - the fetcher works without notifications
+#    - Test your configuration using the built-in connection test
+# 
+# 5. TESTING TELEGRAM SETUP:
+#    - After configuring, the fetcher will test connections on startup
+#    - Send a test message to verify: /start command to your bot
+#    - Check logs for "Telegram notifier initialized" message
+#    - Ensure your bot has permission to send messages to the chat/group
+#
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+# Configure logging behavior
+
+HIST_FETCHER_LOG_LEVEL=INFO
+HIST_FETCHER_LOG_FILE_PATH=logs/historical_fetcher.log
+HIST_FETCHER_LOG_ROTATION=100 MB
+HIST_FETCHER_LOG_RETENTION=30 days
+
+# ============================================================================
+# IMPORTANT NOTES:
+# ============================================================================
+# 
+# 1. OPENALGO_API_KEY is the ONLY broker credential needed
+#    - This key authenticates with OpenAlgo
+#    - OpenAlgo handles the actual broker authentication internally
+#    - DO NOT add BROKER_API_KEY or BROKER_API_SECRET here
+# 
+# 2. The historical fetcher works through OpenAlgo's API layer:
+#    - Fetcher -> OpenAlgo API -> Broker API -> Historical Data
+#    - This ensures consistent authentication and error handling
+# 
+# 3. Make sure your OpenAlgo instance is running and properly configured
+#    with your broker credentials before running the historical fetcher
+# 
+# 4. Generate your OPENALGO_API_KEY from the OpenAlgo web interface:
+#    - Login to OpenAlgo -> Settings -> API Keys -> Generate New Key
+#
+# 5. Install required dependencies (if not already installed):
+#    pip install pydantic-settings
+#    # or install all requirements: pip install -r requirements.txt
+#
+# 6. Copy this template to .env and fill in your actual values:
+#    cp env_template.txt .env
+#    nano .env

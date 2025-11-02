@@ -3,10 +3,7 @@ import traceback
 import pandas as pd
 from typing import Tuple, Dict, Any, Optional, List, Union
 from database.auth_db import get_auth_token_broker
-from utils.logging import get_logger
-
-# Initialize logger
-logger = get_logger(__name__)
+from loguru import logger
 
 def import_broker_module(broker_name: str) -> Optional[Any]:
     """

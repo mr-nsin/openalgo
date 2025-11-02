@@ -1,0 +1,375 @@
+# Historical Data Fetcher for OpenAlgo
+
+A comprehensive, production-ready system for fetching historical market data from Zerodha API and storing it in QuestDB with instrument-specific optimizations.
+
+## 🎯 Features
+
+- **Multi-Instrument Support**: Equity, Futures, Options (CE/PE), and Indices
+- **Multiple Timeframes**: 1m, 3m, 5m, 15m, 30m, 1h, Daily
+- **Async Processing**: High-performance concurrent data fetching
+- **QuestDB Integration**: Optimized time-series database storage
+- **Smart Rate Limiting**: Respects Zerodha API limits
+- **Comprehensive Notifications**: Telegram and Email alerts
+- **Market-Aware Scheduling**: Runs at optimal times based on market calendar
+- **Robust Error Handling**: Retry logic and graceful failure recovery
+- **Performance Monitoring**: System metrics and processing statistics
+- **Modular Architecture**: Easy to extend and maintain
+
+## 📊 Optimized Database Schema
+
+The system creates **symbol-specific tables** with optimized schemas for maximum performance:
+
+### **Symbol-Specific Tables**
+- `eq_{exchange}_{symbol}` - Individual equity tables (e.g., `eq_nse_reliance`)
+- `fut_{exchange}_{underlying}` - Futures by underlying (e.g., `fut_nfo_nifty`)
+- `opt_{exchange}_{underlying}_{expiry}` - Options by expiry (e.g., `opt_nfo_nifty_241128`)
+- `idx_{exchange}_{index}` - Index tables (e.g., `idx_nse_nifty50`)
+
+### **Key Optimizations**
+- **Numeric Timeframes**: `tf BYTE` (1,5,15,60,1440) instead of strings
+- **Optimized Data Types**: `BYTE` for option types, `INT` for strikes
+- **Symbol-Focused**: 100-1000x smaller tables for faster queries
+- **Greeks Support**: Built-in options analytics columns
+
+### **Performance Benefits**
+- **10-100x faster** symbol-specific queries
+- **50-90% less memory** usage
+- **Easy maintenance** and archival per symbol
+- **Parallel processing** of multiple symbols
+
+See [OPTIMIZED_SCHEMA.md](OPTIMIZED_SCHEMA.md) for detailed technical documentation.
+
+## 🚀 Quick Start
+
+### Prerequisites
+
+- Python 3.8+
+- OpenAlgo installed and running
+- QuestDB (will be installed automatically)
+- OpenAlgo API key (generated from OpenAlgo web interface)
+
+### Installation
+
+1. **Clone and navigate to the directory:**
+   ```bash
+   cd test/historical_fetcher
+   ```
+
+2. **Run the installation script:**
+   ```bash
+   chmod +x install.sh
+   ./install.sh
+   ```
+
+3. **Configure your settings:**
+   ```bash
+   cp env_template.txt .env
+   # Edit .env with your actual credentials
+   nano .env
+   ```
+
+4. **Test the setup:**
+   ```bash
+   ./run.sh
+   ```
+
+### Manual Installation
+
+If you prefer manual installation:
+
+```bash
+# Create virtual environment
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Install and start QuestDB
+# See: https://questdb.io/get-questdb/
+
+# Configure environment
+cp env_template.txt .env
+# Edit .env file with your settings
+```
+
+## ⚙️ Configuration
+
+### Authentication Flow
+
+**IMPORTANT**: This historical fetcher uses OpenAlgo's API layer, NOT direct broker APIs.
+
+```
+Historical Fetcher → OpenAlgo API → Broker API → Historical Data
+```
+
+**How it works:**
+1. You provide an `OPENALGO_API_KEY` (generated from OpenAlgo web interface)
+2. The fetcher authenticates with OpenAlgo using this API key
+3. OpenAlgo internally uses its stored broker credentials to fetch data
+4. Historical data flows back through OpenAlgo to the fetcher
+
+**What you DON'T need:**
+- Direct broker API keys (BROKER_API_KEY, BROKER_API_SECRET)
+- Broker access tokens
+- Direct broker authentication
+
+**What you DO need:**
+- OpenAlgo instance running with broker credentials configured
+- OpenAlgo API key generated from the web interface
+
+### Environment Variables
+
+Key configuration options in `.env`:
+
+```bash
+# OpenAlgo API Configuration (REQUIRED)
+OPENALGO_API_KEY=your_openalgo_api_key
+OPENALGO_API_HOST=http://127.0.0.1:5000
+DATABASE_URL=sqlite:///db/openalgo.db
+
+# Data Configuration
+HIST_FETCHER_ENABLED_TIMEFRAMES=1m,5m,15m,1h,D
+HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=EQ,FUT,CE,PE,INDEX
+HIST_FETCHER_HISTORICAL_DAYS_LIMIT=365
+
+# Performance
+HIST_FETCHER_BATCH_SIZE=50
+HIST_FETCHER_MAX_CONCURRENT_REQUESTS=5
+HIST_FETCHER_API_REQUESTS_PER_SECOND=3
+
+# Notifications (Optional - reuses OpenAlgo's Telegram settings)
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_IDS=["your_chat_id"]
+```
+
+### Notification Setup
+
+#### Telegram
+1. Create a bot via [@BotFather](https://t.me/botfather)
+2. Get your chat ID by messaging [@userinfobot](https://t.me/userinfobot)
+3. Add credentials to `.env`
+
+#### Email
+1. Use Gmail App Password (not regular password)
+2. Enable 2FA and generate App Password
+3. Add SMTP settings to `.env`
+
+## 🏃 Usage
+
+### Manual Execution
+
+```bash
+# Single run
+./run.sh
+
+# With custom settings
+HIST_FETCHER_BATCH_SIZE=100 ./run.sh
+```
+
+### Scheduled Execution
+
+```bash
+# Start scheduler service
+./run_scheduler.sh
+
+# The scheduler will run:
+# - Daily at 6:30 PM IST (after market close)
+# - Weekend full sync on Saturday 10:00 PM
+# - Monthly cleanup on first Sunday
+```
+
+### Python API
+
+```python
+from openalgo_main import OpenAlgoHistoricalDataFetcher
+
+# Create and run fetcher
+fetcher = OpenAlgoHistoricalDataFetcher()
+await fetcher.run()
+```
+
+## 📈 Data Access
+
+### QuestDB Console
+Access the web console at: http://localhost:9000
+
+### Sample Queries
+
+```sql
+-- Get latest RELIANCE equity data (optimized)
+SELECT tf, open, high, low, close, volume, timestamp
+FROM eq_nse_reliance 
+WHERE tf = 1440  -- Daily timeframe
+ORDER BY timestamp DESC LIMIT 10;
+
+-- Options chain analysis (NIFTY ATM options)
+SELECT 
+    CASE WHEN option_type = 1 THEN 'CE' ELSE 'PE' END as type,
+    strike / 100.0 as strike_price,
+    close as ltp, oi, volume
+FROM opt_nfo_nifty_241128
+WHERE tf = 5  -- 5-minute data
+  AND strike BETWEEN 2200000 AND 2250000  -- 22000-22500 strikes
+  AND timestamp = (SELECT MAX(timestamp) FROM opt_nfo_nifty_241128 WHERE tf = 5)
+ORDER BY strike, option_type;
+
+-- Futures OI change analysis (optimized)
+SELECT 
+    contract_token,
+    expiry_date,
+    FIRST(oi) as opening_oi,
+    LAST(oi) as closing_oi,
+    LAST(oi) - FIRST(oi) as oi_change
+FROM fut_nfo_banknifty
+WHERE tf = 1440  -- Daily
+  AND timestamp >= '2024-11-01'
+GROUP BY contract_token, expiry_date
+ORDER BY oi_change DESC;
+```
+
+## 🔧 Architecture
+
+### Components
+
+```
+historical_fetcher/
+├── config/           # Configuration management
+├── fetchers/         # Data fetching logic
+├── database/         # QuestDB client and models
+├── notifications/    # Telegram and email alerts
+├── utils/           # Utilities (logging, rate limiting)
+├── scheduler/       # Market-aware job scheduling
+└── openalgo_main.py # Main orchestrator (OpenAlgo integrated)
+```
+
+### Data Flow
+
+1. **Symbol Discovery**: Query OpenAlgo's symtoken table
+2. **Instrument Classification**: Group by type (EQ/FUT/CE/PE/INDEX)
+3. **Batch Processing**: Process symbols concurrently with rate limiting
+4. **Data Fetching**: Retrieve historical data from Zerodha API
+5. **Storage**: Store in appropriate QuestDB tables
+6. **Monitoring**: Track progress and send notifications
+
+## 📊 Monitoring
+
+### Logs
+```bash
+# View real-time logs
+tail -f logs/historical_fetcher.log
+
+# View structured logs
+tail -f logs/historical_fetcher_structured.jsonl
+```
+
+### Performance Metrics
+- Processing rate (symbols/second)
+- API success rate
+- Memory and CPU usage
+- Database insertion performance
+
+### Notifications
+- Success/failure alerts
+- Progress updates (every 5 minutes)
+- Performance warnings
+- Error details with context
+
+## 🛠️ Troubleshooting
+
+### Common Issues
+
+1. **QuestDB Connection Failed**
+   ```bash
+   # Check if QuestDB is running
+   ps aux | grep questdb
+   
+   # Start QuestDB
+   questdb start -d data/questdb
+   ```
+
+2. **OpenAlgo API Errors**
+   - Verify OPENALGO_API_KEY in `.env`
+   - Ensure OpenAlgo instance is running
+   - Check that your OpenAlgo has valid broker credentials configured
+
+3. **No Symbols Found**
+   - Ensure OpenAlgo is running
+   - Download master contract in OpenAlgo
+   - Check DATABASE_URL in `.env`
+
+4. **Memory Issues**
+   - Reduce BATCH_SIZE
+   - Lower MAX_CONCURRENT_REQUESTS
+   - Increase MEMORY_LIMIT_MB
+
+### Debug Mode
+
+```bash
+# Enable debug logging
+HIST_FETCHER_LOG_LEVEL=DEBUG ./run.sh
+
+# Test specific components
+python -c "
+from config.openalgo_settings import OpenAlgoSettings
+from database import OptimizedQuestDBClient
+import asyncio
+
+async def test():
+    settings = OpenAlgoSettings()
+    client = OptimizedQuestDBClient(settings)
+    await client.connect()
+    print('QuestDB connection successful')
+
+asyncio.run(test())
+"
+```
+
+## 🔄 Maintenance
+
+### Regular Tasks
+
+1. **Monitor Disk Space**: QuestDB data grows over time
+2. **Update Market Calendar**: Add new holidays annually
+3. **Rotate Logs**: Automatic with loguru configuration
+4. **Performance Tuning**: Adjust batch sizes based on usage
+
+### Backup Strategy
+
+```bash
+# Backup QuestDB data
+cp -r data/questdb data/questdb_backup_$(date +%Y%m%d)
+
+# Backup configuration
+cp .env .env.backup
+```
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
+
+## 📄 License
+
+This project is part of OpenAlgo and follows the same license terms.
+
+## 🆘 Support
+
+- **Documentation**: Check this README and inline code comments
+- **Issues**: Report bugs via GitHub issues
+- **Community**: Join OpenAlgo community discussions
+- **Logs**: Always check logs first for error details
+
+## 📚 Additional Resources
+
+- [QuestDB Documentation](https://questdb.io/docs/)
+- [OpenAlgo Documentation](https://docs.openalgo.in/)
+- [OpenAlgo API Reference](https://docs.openalgo.in/api/)
+- [APScheduler Documentation](https://apscheduler.readthedocs.io/)
+
+---
+
+**Note**: This system is designed for educational and research purposes. Ensure compliance with your broker's terms of service and applicable regulations when using in production.
