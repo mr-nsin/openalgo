@@ -1,383 +1,267 @@
 """
 Performance Monitor
-==================
+===================
 
-Comprehensive performance monitoring and metrics collection for the
-MyTrading system with real-time statistics and alerting.
+Performance monitoring and profiling utilities for the MyTrading system.
 """
 
 import time
 import asyncio
+import functools
 import threading
-from typing import Dict, List, Optional, Any, Callable
-from dataclasses import dataclass, field
+from typing import Dict, List, Any, Optional, Callable
 from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-import statistics
-import psutil
-import gc
-from contextlib import contextmanager
 
-from .logging_config import get_logger, log_performance_metrics
+from .logging_config import get_logger, log_performance
 
 logger = get_logger(__name__)
 
 
 @dataclass
 class PerformanceMetric:
-    """Individual performance metric"""
+    """Performance metric data"""
     name: str
-    value: float
-    unit: str
-    timestamp: datetime
     component: str
     operation: str
+    duration: float
+    timestamp: float
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
-class PerformanceStats:
-    """Statistical summary of performance metrics"""
-    count: int = 0
-    total: float = 0.0
-    min_value: float = float('inf')
-    max_value: float = 0.0
-    mean: float = 0.0
-    median: float = 0.0
-    std_dev: float = 0.0
-    percentile_95: float = 0.0
-    percentile_99: float = 0.0
+class ComponentStats:
+    """Statistics for a component"""
+    total_calls: int = 0
+    total_duration: float = 0.0
+    min_duration: float = float('inf')
+    max_duration: float = 0.0
+    avg_duration: float = 0.0
+    last_call_time: float = 0.0
+    error_count: int = 0
     
-    def update(self, values: List[float]):
-        """Update statistics with new values"""
-        if not values:
-            return
+    def update(self, duration: float, timestamp: float, is_error: bool = False):
+        """Update statistics with new measurement"""
+        self.total_calls += 1
+        self.total_duration += duration
+        self.min_duration = min(self.min_duration, duration)
+        self.max_duration = max(self.max_duration, duration)
+        self.avg_duration = self.total_duration / self.total_calls
+        self.last_call_time = timestamp
         
-        self.count = len(values)
-        self.total = sum(values)
-        self.min_value = min(values)
-        self.max_value = max(values)
-        self.mean = statistics.mean(values)
-        
-        if len(values) > 1:
-            self.median = statistics.median(values)
-            self.std_dev = statistics.stdev(values)
-            
-            # Calculate percentiles
-            sorted_values = sorted(values)
-            self.percentile_95 = sorted_values[int(0.95 * len(sorted_values))]
-            self.percentile_99 = sorted_values[int(0.99 * len(sorted_values))]
-        else:
-            self.median = values[0]
-            self.std_dev = 0.0
-            self.percentile_95 = values[0]
-            self.percentile_99 = values[0]
-
-
-class Timer:
-    """High-precision timer for performance measurement"""
-    
-    def __init__(self, name: str = "operation"):
-        self.name = name
-        self.start_time: Optional[float] = None
-        self.end_time: Optional[float] = None
-        self.duration: Optional[float] = None
-    
-    def start(self):
-        """Start the timer"""
-        self.start_time = time.perf_counter()
-        return self
-    
-    def stop(self):
-        """Stop the timer and calculate duration"""
-        if self.start_time is None:
-            raise ValueError("Timer not started")
-        
-        self.end_time = time.perf_counter()
-        self.duration = self.end_time - self.start_time
-        return self.duration
-    
-    def __enter__(self):
-        """Context manager entry"""
-        self.start()
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit"""
-        self.stop()
-    
-    @property
-    def elapsed(self) -> float:
-        """Get elapsed time (even if timer is still running)"""
-        if self.start_time is None:
-            return 0.0
-        
-        end_time = self.end_time or time.perf_counter()
-        return end_time - self.start_time
-    
-    @property
-    def elapsed_ms(self) -> float:
-        """Get elapsed time in milliseconds"""
-        return self.elapsed * 1000
-
-
-class SystemMonitor:
-    """System resource monitoring"""
-    
-    def __init__(self):
-        self.process = psutil.Process()
-        self.start_time = time.time()
-    
-    def get_cpu_usage(self) -> float:
-        """Get current CPU usage percentage"""
-        return self.process.cpu_percent()
-    
-    def get_memory_usage(self) -> Dict[str, float]:
-        """Get memory usage information"""
-        memory_info = self.process.memory_info()
-        memory_percent = self.process.memory_percent()
-        
-        return {
-            "rss": memory_info.rss / 1024 / 1024,  # MB
-            "vms": memory_info.vms / 1024 / 1024,  # MB
-            "percent": memory_percent,
-            "available": psutil.virtual_memory().available / 1024 / 1024  # MB
-        }
-    
-    def get_disk_io(self) -> Dict[str, int]:
-        """Get disk I/O statistics"""
-        try:
-            io_counters = self.process.io_counters()
-            return {
-                "read_bytes": io_counters.read_bytes,
-                "write_bytes": io_counters.write_bytes,
-                "read_count": io_counters.read_count,
-                "write_count": io_counters.write_count
-            }
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            return {"read_bytes": 0, "write_bytes": 0, "read_count": 0, "write_count": 0}
-    
-    def get_network_io(self) -> Dict[str, int]:
-        """Get network I/O statistics"""
-        try:
-            net_io = psutil.net_io_counters()
-            return {
-                "bytes_sent": net_io.bytes_sent,
-                "bytes_recv": net_io.bytes_recv,
-                "packets_sent": net_io.packets_sent,
-                "packets_recv": net_io.packets_recv
-            }
-        except AttributeError:
-            return {"bytes_sent": 0, "bytes_recv": 0, "packets_sent": 0, "packets_recv": 0}
-    
-    def get_thread_count(self) -> int:
-        """Get current thread count"""
-        return threading.active_count()
-    
-    def get_gc_stats(self) -> Dict[str, Any]:
-        """Get garbage collection statistics"""
-        gc_stats = gc.get_stats()
-        return {
-            "collections": sum(stat["collections"] for stat in gc_stats),
-            "collected": sum(stat["collected"] for stat in gc_stats),
-            "uncollectable": sum(stat["uncollectable"] for stat in gc_stats)
-        }
+        if is_error:
+            self.error_count += 1
 
 
 class PerformanceMonitor:
-    """Comprehensive performance monitoring system"""
+    """
+    Performance monitoring system
+    
+    Tracks execution times, throughput, and system metrics
+    """
     
     def __init__(self, max_history: int = 10000):
         self.max_history = max_history
-        self.metrics: Dict[str, deque] = defaultdict(lambda: deque(maxlen=max_history))
-        self.stats_cache: Dict[str, PerformanceStats] = {}
-        self.cache_expiry: Dict[str, datetime] = {}
-        self.cache_duration = timedelta(seconds=30)
+        self.is_monitoring = False
+        self.start_time = time.time()
         
-        # System monitoring
-        self.system_monitor = SystemMonitor()
+        # Metrics storage
+        self.metrics: deque = deque(maxlen=max_history)
+        self.component_stats: Dict[str, Dict[str, ComponentStats]] = defaultdict(lambda: defaultdict(ComponentStats))
         
-        # Performance thresholds and alerts
-        self.thresholds: Dict[str, Dict[str, float]] = {}
-        self.alert_callbacks: List[Callable] = []
-        
-        # Monitoring state
-        self.monitoring_active = False
-        self.monitoring_interval = 1.0  # seconds
+        # Real-time monitoring
         self.monitoring_task: Optional[asyncio.Task] = None
+        self.monitoring_interval = 5.0  # seconds
         
         # Thread safety
         self.lock = threading.RLock()
         
-        logger.info("Performance monitor initialized")
+        logger.info("📊 PerformanceMonitor initialized")
     
-    def record_metric(
-        self,
-        component: str,
-        operation: str,
-        value: float,
-        unit: str = "ms",
-        **metadata
-    ):
+    def record_metric(self, component: str, operation: str, duration: float, 
+                     metadata: Optional[Dict[str, Any]] = None, is_error: bool = False):
         """Record a performance metric"""
-        metric = PerformanceMetric(
-            name=f"{component}.{operation}",
-            value=value,
-            unit=unit,
-            timestamp=datetime.utcnow(),
-            component=component,
-            operation=operation,
-            metadata=metadata
-        )
+        timestamp = time.time()
         
         with self.lock:
-            self.metrics[metric.name].append(metric)
+            # Create metric
+            metric = PerformanceMetric(
+                name=f"{component}.{operation}",
+                component=component,
+                operation=operation,
+                duration=duration,
+                timestamp=timestamp,
+                metadata=metadata or {}
+            )
             
-            # Invalidate cache for this metric
-            if metric.name in self.cache_expiry:
-                del self.cache_expiry[metric.name]
-        
-        # Check thresholds
-        self._check_thresholds(metric)
-        
-        # Log performance metric
-        log_performance_metrics(
-            component, operation, value / 1000 if unit == "ms" else value,
-            **metadata
-        )
+            # Store metric
+            self.metrics.append(metric)
+            
+            # Update component stats
+            stats = self.component_stats[component][operation]
+            stats.update(duration, timestamp, is_error)
+            
+            # Log performance if enabled
+            if duration > 1.0:  # Log slow operations (>1 second)
+                logger.warning(f"Slow operation: {component}.{operation} took {duration*1000:.1f}ms")
+            
+            log_performance(component, operation, duration, **metadata or {})
     
-    def record_duration(
-        self,
-        component: str,
-        operation: str,
-        duration: float,
-        **metadata
-    ):
-        """Record a duration metric in seconds"""
-        self.record_metric(
-            component, operation, duration * 1000, "ms", **metadata
-        )
-    
-    def get_stats(self, metric_name: str) -> Optional[PerformanceStats]:
-        """Get statistical summary for a metric"""
+    def get_component_stats(self, component: str) -> Dict[str, ComponentStats]:
+        """Get statistics for a component"""
         with self.lock:
-            # Check cache
-            if (metric_name in self.cache_expiry and 
-                datetime.utcnow() < self.cache_expiry[metric_name]):
-                return self.stats_cache.get(metric_name)
-            
-            # Calculate fresh stats
-            if metric_name not in self.metrics:
-                return None
-            
-            values = [m.value for m in self.metrics[metric_name]]
-            if not values:
-                return None
-            
-            stats = PerformanceStats()
-            stats.update(values)
-            
-            # Cache results
-            self.stats_cache[metric_name] = stats
-            self.cache_expiry[metric_name] = datetime.utcnow() + self.cache_duration
-            
-            return stats
+            return dict(self.component_stats[component])
     
-    def get_recent_metrics(
-        self,
-        metric_name: str,
-        duration: timedelta = timedelta(minutes=5)
-    ) -> List[PerformanceMetric]:
+    def get_operation_stats(self, component: str, operation: str) -> Optional[ComponentStats]:
+        """Get statistics for a specific operation"""
+        with self.lock:
+            return self.component_stats[component].get(operation)
+    
+    def get_recent_metrics(self, component: Optional[str] = None, 
+                          operation: Optional[str] = None, 
+                          duration_seconds: int = 300) -> List[PerformanceMetric]:
         """Get recent metrics within specified duration"""
-        cutoff_time = datetime.utcnow() - duration
+        cutoff_time = time.time() - duration_seconds
         
         with self.lock:
-            if metric_name not in self.metrics:
-                return []
+            recent_metrics = []
+            for metric in reversed(self.metrics):
+                if metric.timestamp < cutoff_time:
+                    break
+                
+                if component and metric.component != component:
+                    continue
+                
+                if operation and metric.operation != operation:
+                    continue
+                
+                recent_metrics.append(metric)
             
-            return [
-                m for m in self.metrics[metric_name]
-                if m.timestamp >= cutoff_time
-            ]
+            return list(reversed(recent_metrics))
     
-    def get_all_metrics(self) -> Dict[str, List[PerformanceMetric]]:
-        """Get all recorded metrics"""
+    def get_slowest_operations(self, limit: int = 10) -> List[tuple]:
+        """Get slowest operations"""
         with self.lock:
+            slow_ops = []
+            
+            for component, operations in self.component_stats.items():
+                for operation, stats in operations.items():
+                    slow_ops.append((
+                        f"{component}.{operation}",
+                        stats.max_duration,
+                        stats.avg_duration,
+                        stats.total_calls
+                    ))
+            
+            # Sort by max duration
+            slow_ops.sort(key=lambda x: x[1], reverse=True)
+            return slow_ops[:limit]
+    
+    def get_most_called_operations(self, limit: int = 10) -> List[tuple]:
+        """Get most frequently called operations"""
+        with self.lock:
+            frequent_ops = []
+            
+            for component, operations in self.component_stats.items():
+                for operation, stats in operations.items():
+                    frequent_ops.append((
+                        f"{component}.{operation}",
+                        stats.total_calls,
+                        stats.avg_duration,
+                        stats.total_duration
+                    ))
+            
+            # Sort by total calls
+            frequent_ops.sort(key=lambda x: x[1], reverse=True)
+            return frequent_ops[:limit]
+    
+    def get_error_rates(self) -> Dict[str, float]:
+        """Get error rates by component"""
+        with self.lock:
+            error_rates = {}
+            
+            for component, operations in self.component_stats.items():
+                total_calls = sum(stats.total_calls for stats in operations.values())
+                total_errors = sum(stats.error_count for stats in operations.values())
+                
+                if total_calls > 0:
+                    error_rates[component] = total_errors / total_calls
+                else:
+                    error_rates[component] = 0.0
+            
+            return error_rates
+    
+    def get_throughput_stats(self, duration_seconds: int = 300) -> Dict[str, float]:
+        """Get throughput statistics (operations per second)"""
+        recent_metrics = self.get_recent_metrics(duration_seconds=duration_seconds)
+        
+        if not recent_metrics:
+            return {}
+        
+        # Count operations by component
+        component_counts = defaultdict(int)
+        for metric in recent_metrics:
+            component_counts[metric.component] += 1
+        
+        # Calculate throughput
+        throughput = {}
+        for component, count in component_counts.items():
+            throughput[component] = count / duration_seconds
+        
+        return throughput
+    
+    def get_summary_report(self) -> Dict[str, Any]:
+        """Get comprehensive performance summary"""
+        current_time = time.time()
+        uptime = current_time - self.start_time
+        
+        with self.lock:
+            total_operations = sum(
+                sum(stats.total_calls for stats in operations.values())
+                for operations in self.component_stats.values()
+            )
+            
             return {
-                name: list(metrics)
-                for name, metrics in self.metrics.items()
+                "uptime_seconds": uptime,
+                "total_operations": total_operations,
+                "operations_per_second": total_operations / uptime if uptime > 0 else 0,
+                "components_monitored": len(self.component_stats),
+                "metrics_stored": len(self.metrics),
+                "slowest_operations": self.get_slowest_operations(5),
+                "most_called_operations": self.get_most_called_operations(5),
+                "error_rates": self.get_error_rates(),
+                "throughput_5min": self.get_throughput_stats(300),
+                "memory_usage": self._get_memory_usage()
             }
     
-    def get_system_metrics(self) -> Dict[str, Any]:
-        """Get current system performance metrics"""
-        return {
-            "cpu_usage": self.system_monitor.get_cpu_usage(),
-            "memory_usage": self.system_monitor.get_memory_usage(),
-            "disk_io": self.system_monitor.get_disk_io(),
-            "network_io": self.system_monitor.get_network_io(),
-            "thread_count": self.system_monitor.get_thread_count(),
-            "gc_stats": self.system_monitor.get_gc_stats(),
-            "timestamp": datetime.utcnow().isoformat()
-        }
+    def _get_memory_usage(self) -> Dict[str, Any]:
+        """Get memory usage statistics"""
+        try:
+            import psutil
+            process = psutil.Process()
+            memory_info = process.memory_info()
+            
+            return {
+                "rss_mb": memory_info.rss / 1024 / 1024,
+                "vms_mb": memory_info.vms / 1024 / 1024,
+                "percent": process.memory_percent()
+            }
+        except ImportError:
+            return {"error": "psutil not available"}
     
-    def set_threshold(
-        self,
-        metric_name: str,
-        warning_threshold: float,
-        critical_threshold: float
-    ):
-        """Set performance thresholds for alerting"""
-        self.thresholds[metric_name] = {
-            "warning": warning_threshold,
-            "critical": critical_threshold
-        }
-    
-    def add_alert_callback(self, callback: Callable[[str, PerformanceMetric], None]):
-        """Add callback for performance alerts"""
-        self.alert_callbacks.append(callback)
-    
-    def _check_thresholds(self, metric: PerformanceMetric):
-        """Check if metric exceeds thresholds"""
-        if metric.name not in self.thresholds:
+    async def start_monitoring(self):
+        """Start real-time monitoring"""
+        if self.is_monitoring:
             return
         
-        thresholds = self.thresholds[metric.name]
-        
-        if metric.value >= thresholds["critical"]:
-            self._trigger_alert("critical", metric)
-        elif metric.value >= thresholds["warning"]:
-            self._trigger_alert("warning", metric)
-    
-    def _trigger_alert(self, level: str, metric: PerformanceMetric):
-        """Trigger performance alert"""
-        alert_message = (
-            f"Performance {level}: {metric.name} = {metric.value}{metric.unit} "
-            f"at {metric.timestamp}"
-        )
-        
-        if level == "critical":
-            logger.critical(alert_message, **metric.metadata)
-        else:
-            logger.warning(alert_message, **metric.metadata)
-        
-        # Call alert callbacks
-        for callback in self.alert_callbacks:
-            try:
-                callback(level, metric)
-            except Exception as e:
-                logger.error(f"Error in alert callback: {e}")
-    
-    async def start_monitoring(self, interval: float = 1.0):
-        """Start continuous system monitoring"""
-        self.monitoring_interval = interval
-        self.monitoring_active = True
-        
+        self.is_monitoring = True
         self.monitoring_task = asyncio.create_task(self._monitoring_loop())
-        logger.info(f"Started performance monitoring (interval: {interval}s)")
+        logger.info("📊 Performance monitoring started")
     
     async def stop_monitoring(self):
-        """Stop continuous monitoring"""
-        self.monitoring_active = False
+        """Stop real-time monitoring"""
+        self.is_monitoring = False
         
         if self.monitoring_task:
             self.monitoring_task.cancel()
@@ -386,108 +270,247 @@ class PerformanceMonitor:
             except asyncio.CancelledError:
                 pass
         
-        logger.info("Stopped performance monitoring")
+        logger.info("📊 Performance monitoring stopped")
     
     async def _monitoring_loop(self):
-        """Continuous monitoring loop"""
+        """Real-time monitoring loop"""
         try:
-            while self.monitoring_active:
-                # Record system metrics
-                system_metrics = self.get_system_metrics()
+            while self.is_monitoring:
+                # Log summary statistics
+                summary = self.get_summary_report()
                 
-                self.record_metric("system", "cpu_usage", system_metrics["cpu_usage"], "%")
-                self.record_metric("system", "memory_usage", system_metrics["memory_usage"]["percent"], "%")
-                self.record_metric("system", "thread_count", system_metrics["thread_count"], "count")
+                logger.debug(
+                    f"📊 Performance: {summary['total_operations']} ops, "
+                    f"{summary['operations_per_second']:.1f} ops/sec, "
+                    f"{summary['components_monitored']} components"
+                )
+                
+                # Check for performance issues
+                await self._check_performance_issues()
                 
                 await asyncio.sleep(self.monitoring_interval)
                 
         except asyncio.CancelledError:
-            logger.debug("Monitoring loop cancelled")
-        except Exception as e:
-            logger.error(f"Error in monitoring loop: {e}")
+            logger.debug("Performance monitoring loop cancelled")
     
-    def clear_metrics(self, metric_name: Optional[str] = None):
-        """Clear metrics (all or specific metric)"""
-        with self.lock:
-            if metric_name:
-                if metric_name in self.metrics:
-                    self.metrics[metric_name].clear()
-                if metric_name in self.stats_cache:
-                    del self.stats_cache[metric_name]
-                if metric_name in self.cache_expiry:
-                    del self.cache_expiry[metric_name]
-            else:
-                self.metrics.clear()
-                self.stats_cache.clear()
-                self.cache_expiry.clear()
+    async def _check_performance_issues(self):
+        """Check for performance issues and alert"""
+        # Check for slow operations
+        slowest = self.get_slowest_operations(3)
+        for op_name, max_duration, avg_duration, calls in slowest:
+            if max_duration > 5.0:  # 5 seconds
+                logger.warning(f"⚠️  Slow operation detected: {op_name} max={max_duration*1000:.0f}ms")
+        
+        # Check error rates
+        error_rates = self.get_error_rates()
+        for component, error_rate in error_rates.items():
+            if error_rate > 0.1:  # 10% error rate
+                logger.warning(f"⚠️  High error rate in {component}: {error_rate:.1%}")
     
-    def get_summary_report(self) -> Dict[str, Any]:
-        """Get comprehensive performance summary"""
+    def reset_stats(self):
+        """Reset all statistics"""
         with self.lock:
-            report = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "system_metrics": self.get_system_metrics(),
-                "performance_stats": {},
-                "total_metrics": sum(len(metrics) for metrics in self.metrics.values()),
-                "active_metrics": len(self.metrics)
-            }
-            
-            # Add stats for each metric
-            for metric_name in self.metrics.keys():
-                stats = self.get_stats(metric_name)
-                if stats:
-                    report["performance_stats"][metric_name] = {
-                        "count": stats.count,
-                        "mean": round(stats.mean, 2),
-                        "min": round(stats.min_value, 2),
-                        "max": round(stats.max_value, 2),
-                        "p95": round(stats.percentile_95, 2),
-                        "p99": round(stats.percentile_99, 2)
-                    }
-            
-            return report
+            self.metrics.clear()
+            self.component_stats.clear()
+            self.start_time = time.time()
+        
+        logger.info("📊 Performance statistics reset")
 
 
 # Global performance monitor instance
-_global_monitor: Optional[PerformanceMonitor] = None
+_performance_monitor = PerformanceMonitor()
 
 
 def get_performance_monitor() -> PerformanceMonitor:
-    """Get global performance monitor instance"""
-    global _global_monitor
-    if _global_monitor is None:
-        _global_monitor = PerformanceMonitor()
-    return _global_monitor
+    """Get the global performance monitor instance"""
+    return _performance_monitor
 
 
-@contextmanager
-def measure_performance(component: str, operation: str, **metadata):
-    """Context manager for measuring performance"""
-    monitor = get_performance_monitor()
-    timer = Timer(f"{component}.{operation}")
-    
-    try:
-        timer.start()
-        yield timer
-    finally:
-        duration = timer.stop()
-        monitor.record_duration(component, operation, duration, **metadata)
-
-
-def performance_timer(component: str, operation: str = None):
-    """Decorator for automatic performance measurement"""
-    def decorator(func):
-        op_name = operation or func.__name__
+def performance_timer(component: str, operation: str, metadata: Optional[Dict[str, Any]] = None):
+    """Decorator to time function execution"""
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        async def async_wrapper(*args, **kwargs):
+            start_time = time.time()
+            is_error = False
+            
+            try:
+                result = await func(*args, **kwargs)
+                return result
+            except Exception as e:
+                is_error = True
+                raise
+            finally:
+                duration = time.time() - start_time
+                _performance_monitor.record_metric(
+                    component, operation, duration, metadata, is_error
+                )
+        
+        @functools.wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            start_time = time.time()
+            is_error = False
+            
+            try:
+                result = func(*args, **kwargs)
+                return result
+            except Exception as e:
+                is_error = True
+                raise
+            finally:
+                duration = time.time() - start_time
+                _performance_monitor.record_metric(
+                    component, operation, duration, metadata, is_error
+                )
         
         if asyncio.iscoroutinefunction(func):
-            async def async_wrapper(*args, **kwargs):
-                with measure_performance(component, op_name):
-                    return await func(*args, **kwargs)
             return async_wrapper
         else:
-            def sync_wrapper(*args, **kwargs):
-                with measure_performance(component, op_name):
-                    return func(*args, **kwargs)
             return sync_wrapper
     
     return decorator
+
+
+class PerformanceContext:
+    """Context manager for timing operations"""
+    
+    def __init__(self, component: str, operation: str, metadata: Optional[Dict[str, Any]] = None):
+        self.component = component
+        self.operation = operation
+        self.metadata = metadata or {}
+        self.start_time = None
+        self.is_error = False
+    
+    def __enter__(self):
+        self.start_time = time.time()
+        return self
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        duration = time.time() - self.start_time
+        self.is_error = exc_type is not None
+        
+        _performance_monitor.record_metric(
+            self.component, self.operation, duration, self.metadata, self.is_error
+        )
+
+
+def performance_context(component: str, operation: str, metadata: Optional[Dict[str, Any]] = None):
+    """Create a performance timing context"""
+    return PerformanceContext(component, operation, metadata)
+
+
+# Throughput monitoring
+class ThroughputMonitor:
+    """Monitor throughput for specific operations"""
+    
+    def __init__(self, window_size: int = 60):
+        self.window_size = window_size
+        self.timestamps: deque = deque(maxlen=window_size)
+        self.lock = threading.Lock()
+    
+    def record_event(self):
+        """Record an event occurrence"""
+        with self.lock:
+            self.timestamps.append(time.time())
+    
+    def get_rate(self) -> float:
+        """Get current rate (events per second)"""
+        with self.lock:
+            if len(self.timestamps) < 2:
+                return 0.0
+            
+            current_time = time.time()
+            # Remove old timestamps
+            while self.timestamps and current_time - self.timestamps[0] > self.window_size:
+                self.timestamps.popleft()
+            
+            if len(self.timestamps) < 2:
+                return 0.0
+            
+            time_span = self.timestamps[-1] - self.timestamps[0]
+            return len(self.timestamps) / time_span if time_span > 0 else 0.0
+
+
+# Memory profiling utilities
+def profile_memory(func: Callable) -> Callable:
+    """Decorator to profile memory usage"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            import tracemalloc
+            import psutil
+            
+            # Start tracing
+            tracemalloc.start()
+            process = psutil.Process()
+            memory_before = process.memory_info().rss
+            
+            try:
+                result = func(*args, **kwargs)
+                return result
+            finally:
+                # Get memory usage
+                memory_after = process.memory_info().rss
+                current, peak = tracemalloc.get_traced_memory()
+                tracemalloc.stop()
+                
+                memory_diff = memory_after - memory_before
+                
+                logger.debug(
+                    f"Memory profile for {func.__name__}: "
+                    f"RSS diff: {memory_diff/1024/1024:.1f}MB, "
+                    f"Peak traced: {peak/1024/1024:.1f}MB"
+                )
+        
+        except ImportError:
+            # Fallback if profiling libraries not available
+            return func(*args, **kwargs)
+    
+    return wrapper
+
+
+# CPU profiling utilities
+def profile_cpu(func: Callable) -> Callable:
+    """Decorator to profile CPU usage"""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            import cProfile
+            import io
+            import pstats
+            
+            profiler = cProfile.Profile()
+            profiler.enable()
+            
+            try:
+                result = func(*args, **kwargs)
+                return result
+            finally:
+                profiler.disable()
+                
+                # Get stats
+                stats_stream = io.StringIO()
+                stats = pstats.Stats(profiler, stream=stats_stream)
+                stats.sort_stats('cumulative').print_stats(10)
+                
+                logger.debug(f"CPU profile for {func.__name__}:\n{stats_stream.getvalue()}")
+        
+        except ImportError:
+            # Fallback if profiling not available
+            return func(*args, **kwargs)
+    
+    return wrapper
+
+
+# Export commonly used functions
+__all__ = [
+    'PerformanceMonitor',
+    'PerformanceMetric',
+    'ComponentStats',
+    'get_performance_monitor',
+    'performance_timer',
+    'performance_context',
+    'ThroughputMonitor',
+    'profile_memory',
+    'profile_cpu'
+]

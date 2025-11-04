@@ -1,49 +1,32 @@
 """
 Strategy Configuration
-=====================
+======================
 
-Configuration for trading strategies, including technical indicators,
-risk parameters, and execution rules.
+Defines trading strategy configurations and parameters.
 """
 
-import yaml
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+import os
 from dataclasses import dataclass, field
+from typing import Dict, List, Any, Optional
 from enum import Enum
 
-from .symbols import TimeFrame
+
+class StrategyType(Enum):
+    """Strategy types"""
+    TECHNICAL = "TECHNICAL"
+    FUNDAMENTAL = "FUNDAMENTAL"
+    QUANTITATIVE = "QUANTITATIVE"
+    ARBITRAGE = "ARBITRAGE"
+    MOMENTUM = "MOMENTUM"
+    MEAN_REVERSION = "MEAN_REVERSION"
 
 
-class StrategyType(str, Enum):
-    """Types of trading strategies"""
-    TECHNICAL = "technical"         # Technical analysis based
-    MOMENTUM = "momentum"           # Momentum strategies
-    MEAN_REVERSION = "mean_reversion"  # Mean reversion strategies
-    ARBITRAGE = "arbitrage"         # Arbitrage opportunities
-    OPTIONS = "options"             # Options strategies
-    SCALPING = "scalping"           # High-frequency scalping
-    SWING = "swing"                 # Swing trading
-    CUSTOM = "custom"               # Custom user-defined strategies
-
-
-class SignalType(str, Enum):
-    """Types of trading signals"""
-    BUY = "buy"
-    SELL = "sell"
-    HOLD = "hold"
-    EXIT = "exit"
-    STOP_LOSS = "stop_loss"
-    TAKE_PROFIT = "take_profit"
-
-
-class OrderType(str, Enum):
-    """Order types for strategy execution"""
-    MARKET = "market"
-    LIMIT = "limit"
-    STOP_LOSS = "stop_loss"
-    STOP_LIMIT = "stop_limit"
-    BRACKET = "bracket"
+class SignalType(Enum):
+    """Signal types"""
+    BUY = "BUY"
+    SELL = "SELL"
+    HOLD = "HOLD"
+    EXIT = "EXIT"
 
 
 @dataclass
@@ -52,460 +35,361 @@ class IndicatorConfig:
     name: str
     parameters: Dict[str, Any] = field(default_factory=dict)
     enabled: bool = True
-    
-    # Common indicator parameters
-    period: Optional[int] = None
-    source: str = "close"  # open, high, low, close, volume
-    
-    def __post_init__(self):
-        """Set default parameters based on indicator name"""
-        if self.name.upper() == "SMA" and "period" not in self.parameters:
-            self.parameters["period"] = self.period or 20
-        elif self.name.upper() == "EMA" and "period" not in self.parameters:
-            self.parameters["period"] = self.period or 20
-        elif self.name.upper() == "RSI" and "period" not in self.parameters:
-            self.parameters["period"] = self.period or 14
-        elif self.name.upper() == "MACD":
-            if "fast_period" not in self.parameters:
-                self.parameters["fast_period"] = 12
-            if "slow_period" not in self.parameters:
-                self.parameters["slow_period"] = 26
-            if "signal_period" not in self.parameters:
-                self.parameters["signal_period"] = 9
-        elif self.name.upper() == "BOLLINGER_BANDS":
-            if "period" not in self.parameters:
-                self.parameters["period"] = self.period or 20
-            if "std_dev" not in self.parameters:
-                self.parameters["std_dev"] = 2
-
-
-@dataclass
-class RiskParameters:
-    """Risk management parameters for strategies"""
-    # Position sizing
-    max_position_size: float = 10000.0  # Maximum position size in currency
-    position_size_percent: float = 0.02  # Position size as % of capital
-    
-    # Stop loss settings
-    stop_loss_percent: float = 0.02      # Stop loss as % of entry price
-    trailing_stop_enabled: bool = False
-    trailing_stop_percent: float = 0.01  # Trailing stop distance
-    
-    # Take profit settings
-    take_profit_percent: float = 0.04    # Take profit as % of entry price
-    partial_profit_enabled: bool = False
-    partial_profit_levels: List[float] = field(default_factory=lambda: [0.02, 0.03])
-    
-    # Risk limits
-    max_daily_trades: int = 10
-    max_concurrent_positions: int = 3
-    max_drawdown_percent: float = 0.05   # Maximum strategy drawdown
-    
-    # Time-based rules
-    trading_start_time: str = "09:15"    # Market open time
-    trading_end_time: str = "15:30"      # Market close time
-    avoid_first_minutes: int = 5         # Avoid trading in first N minutes
-    avoid_last_minutes: int = 15         # Avoid trading in last N minutes
-
-
-@dataclass
-class ExecutionParameters:
-    """Order execution parameters"""
-    default_order_type: OrderType = OrderType.MARKET
-    limit_order_offset: float = 0.001    # Offset for limit orders (as % of price)
-    order_timeout: int = 300             # Order timeout in seconds
-    
-    # Slippage and fees
-    expected_slippage: float = 0.0005    # Expected slippage (0.05%)
-    transaction_cost: float = 0.0003     # Transaction cost (0.03%)
-    
-    # Order management
-    enable_order_modification: bool = True
-    max_order_modifications: int = 3
-    modification_timeout: int = 60       # Seconds to wait before modification
 
 
 @dataclass
 class StrategyConfig:
-    """Complete strategy configuration"""
+    """Configuration for a trading strategy"""
     name: str
     strategy_type: StrategyType
-    description: str = ""
+    description: str
+    enabled: bool = True
+    
+    # Symbol and timeframe configuration
+    symbols: List[str] = field(default_factory=list)
+    timeframes: List[str] = field(default_factory=list)
     
     # Strategy parameters
-    timeframes: List[TimeFrame] = field(default_factory=list)
-    symbols: List[str] = field(default_factory=list)  # Symbol patterns or specific symbols
+    parameters: Dict[str, Any] = field(default_factory=dict)
     
     # Technical indicators
     indicators: List[IndicatorConfig] = field(default_factory=list)
     
-    # Strategy-specific parameters
-    parameters: Dict[str, Any] = field(default_factory=dict)
+    # Risk management
+    max_position_size: float = 10000.0
+    stop_loss_pct: float = 0.02  # 2%
+    take_profit_pct: float = 0.04  # 4%
     
-    # Risk and execution
-    risk_parameters: RiskParameters = field(default_factory=RiskParameters)
-    execution_parameters: ExecutionParameters = field(default_factory=ExecutionParameters)
+    # Signal generation
+    min_confidence: float = 0.6
+    signal_cooldown: int = 300  # seconds
     
-    # Control flags
-    enabled: bool = True
-    paper_trading: bool = True
-    
-    # Performance tracking
-    track_performance: bool = True
-    benchmark_symbol: Optional[str] = None
-    
-    def __post_init__(self):
-        """Post-initialization processing"""
-        if isinstance(self.strategy_type, str):
-            self.strategy_type = StrategyType(self.strategy_type)
-        
-        # Convert string timeframes to TimeFrame enums
-        converted_timeframes = []
-        for tf in self.timeframes:
-            if isinstance(tf, str):
-                converted_timeframes.append(TimeFrame(tf))
-            else:
-                converted_timeframes.append(tf)
-        self.timeframes = converted_timeframes
-    
-    def add_indicator(self, name: str, parameters: Dict[str, Any] = None, **kwargs):
-        """Add a technical indicator to the strategy"""
-        if parameters is None:
-            parameters = {}
-        
-        # Merge kwargs into parameters
-        parameters.update(kwargs)
-        
-        indicator = IndicatorConfig(name=name, parameters=parameters)
-        self.indicators.append(indicator)
-    
-    def get_indicator(self, name: str) -> Optional[IndicatorConfig]:
-        """Get indicator configuration by name"""
-        for indicator in self.indicators:
-            if indicator.name.upper() == name.upper():
-                return indicator
-        return None
-    
-    def remove_indicator(self, name: str) -> bool:
-        """Remove indicator by name"""
-        for i, indicator in enumerate(self.indicators):
-            if indicator.name.upper() == name.upper():
-                del self.indicators[i]
-                return True
-        return False
+    # Execution settings
+    order_type: str = "MARKET"
+    execution_delay: float = 0.0
 
 
 class StrategyManager:
-    """Manager for multiple strategy configurations"""
+    """Manages strategy configurations"""
     
     def __init__(self):
         self.strategies: Dict[str, StrategyConfig] = {}
-        self.strategy_groups: Dict[str, List[str]] = {}
-    
-    def add_strategy(self, strategy: StrategyConfig):
-        """Add a strategy configuration"""
-        self.strategies[strategy.name] = strategy
-    
-    def get_strategy(self, name: str) -> Optional[StrategyConfig]:
-        """Get strategy by name"""
-        return self.strategies.get(name)
-    
-    def remove_strategy(self, name: str) -> bool:
-        """Remove strategy by name"""
-        if name in self.strategies:
-            del self.strategies[name]
-            return True
-        return False
-    
-    def get_strategies_by_type(self, strategy_type: StrategyType) -> List[StrategyConfig]:
-        """Get all strategies of a specific type"""
-        return [
-            strategy for strategy in self.strategies.values()
-            if strategy.strategy_type == strategy_type and strategy.enabled
-        ]
-    
-    def get_strategies_by_timeframe(self, timeframe: TimeFrame) -> List[StrategyConfig]:
-        """Get all strategies that use a specific timeframe"""
-        return [
-            strategy for strategy in self.strategies.values()
-            if timeframe in strategy.timeframes and strategy.enabled
-        ]
-    
-    def get_strategies_for_symbol(self, symbol: str) -> List[StrategyConfig]:
-        """Get all strategies that trade a specific symbol"""
-        matching_strategies = []
-        for strategy in self.strategies.values():
-            if not strategy.enabled:
-                continue
-            
-            # Check if symbol matches any pattern in strategy.symbols
-            for pattern in strategy.symbols:
-                if pattern == symbol or pattern == "*" or symbol.startswith(pattern.replace("*", "")):
-                    matching_strategies.append(strategy)
-                    break
-        
-        return matching_strategies
-    
-    def get_enabled_strategies(self) -> List[StrategyConfig]:
-        """Get all enabled strategies"""
-        return [strategy for strategy in self.strategies.values() if strategy.enabled]
     
     @classmethod
     def create_default_strategies(cls) -> 'StrategyManager':
         """Create default strategy configurations"""
         manager = cls()
         
-        # 1. Simple Moving Average Crossover Strategy
-        sma_strategy = StrategyConfig(
+        # Load strategies from environment or create defaults
+        manager._create_default_strategies()
+        manager._load_from_environment()
+        
+        return manager
+    
+    def _create_default_strategies(self):
+        """Create default strategy configurations"""
+        
+        # SMA Crossover Strategy
+        sma_crossover = StrategyConfig(
             name="SMA_Crossover",
             strategy_type=StrategyType.TECHNICAL,
-            description="Simple Moving Average crossover strategy",
-            timeframes=[TimeFrame.MINUTE_5, TimeFrame.MINUTE_15],
-            symbols=["NIFTY", "BANKNIFTY"]
+            description="Simple Moving Average Crossover Strategy",
+            symbols=["NIFTY", "BANKNIFTY"],
+            timeframes=["5m", "15m"],
+            parameters={
+                "fast_period": 10,
+                "slow_period": 20,
+                "volume_threshold": 1000
+            },
+            indicators=[
+                IndicatorConfig("SMA", {"period": 10}),
+                IndicatorConfig("SMA", {"period": 20}),
+                IndicatorConfig("Volume", {})
+            ],
+            max_position_size=50000.0,
+            stop_loss_pct=0.015,
+            take_profit_pct=0.03,
+            min_confidence=0.7
         )
-        sma_strategy.add_indicator("SMA", period=20)
-        sma_strategy.add_indicator("SMA", period=50)
-        sma_strategy.parameters = {
-            "fast_period": 20,
-            "slow_period": 50,
-            "min_crossover_strength": 0.5
-        }
-        manager.add_strategy(sma_strategy)
+        self.strategies["SMA_Crossover"] = sma_crossover
         
-        # 2. RSI Mean Reversion Strategy
-        rsi_strategy = StrategyConfig(
+        # RSI Mean Reversion Strategy
+        rsi_mean_reversion = StrategyConfig(
             name="RSI_MeanReversion",
             strategy_type=StrategyType.MEAN_REVERSION,
-            description="RSI-based mean reversion strategy",
-            timeframes=[TimeFrame.MINUTE_1, TimeFrame.MINUTE_5],
-            symbols=["NIFTY*", "BANKNIFTY*"]  # All NIFTY and BANKNIFTY instruments
+            description="RSI-based Mean Reversion Strategy",
+            symbols=["NIFTY", "BANKNIFTY", "SENSEX"],
+            timeframes=["1m", "5m"],
+            parameters={
+                "rsi_period": 14,
+                "oversold_level": 30,
+                "overbought_level": 70,
+                "rsi_smoothing": 3
+            },
+            indicators=[
+                IndicatorConfig("RSI", {"period": 14}),
+                IndicatorConfig("EMA", {"period": 21}),
+                IndicatorConfig("VWAP", {})
+            ],
+            max_position_size=30000.0,
+            stop_loss_pct=0.01,
+            take_profit_pct=0.02,
+            min_confidence=0.65
         )
-        rsi_strategy.add_indicator("RSI", period=14)
-        rsi_strategy.add_indicator("EMA", period=20)
-        rsi_strategy.parameters = {
-            "rsi_oversold": 30,
-            "rsi_overbought": 70,
-            "rsi_extreme_oversold": 20,
-            "rsi_extreme_overbought": 80
-        }
-        rsi_strategy.risk_parameters.stop_loss_percent = 0.015  # 1.5% stop loss
-        rsi_strategy.risk_parameters.take_profit_percent = 0.03  # 3% take profit
-        manager.add_strategy(rsi_strategy)
+        self.strategies["RSI_MeanReversion"] = rsi_mean_reversion
         
-        # 3. MACD Momentum Strategy
+        # Bollinger Bands Strategy
+        bollinger_bands = StrategyConfig(
+            name="BollingerBands_Breakout",
+            strategy_type=StrategyType.MOMENTUM,
+            description="Bollinger Bands Breakout Strategy",
+            symbols=["NIFTY", "BANKNIFTY"],
+            timeframes=["15m", "30m"],
+            parameters={
+                "bb_period": 20,
+                "bb_std_dev": 2.0,
+                "volume_multiplier": 1.5,
+                "breakout_threshold": 0.001
+            },
+            indicators=[
+                IndicatorConfig("BollingerBands", {"period": 20, "std_dev": 2.0}),
+                IndicatorConfig("Volume", {}),
+                IndicatorConfig("ATR", {"period": 14})
+            ],
+            max_position_size=40000.0,
+            stop_loss_pct=0.02,
+            take_profit_pct=0.05,
+            min_confidence=0.75
+        )
+        self.strategies["BollingerBands_Breakout"] = bollinger_bands
+        
+        # MACD Strategy
         macd_strategy = StrategyConfig(
             name="MACD_Momentum",
             strategy_type=StrategyType.MOMENTUM,
-            description="MACD-based momentum strategy",
-            timeframes=[TimeFrame.MINUTE_15, TimeFrame.HOUR_1],
-            symbols=["NSE_INDEX:NIFTY", "NSE_INDEX:BANKNIFTY"]
-        )
-        macd_strategy.add_indicator("MACD", fast_period=12, slow_period=26, signal_period=9)
-        macd_strategy.add_indicator("EMA", period=50)
-        macd_strategy.parameters = {
-            "macd_signal_threshold": 0.1,
-            "trend_confirmation_required": True,
-            "volume_confirmation": True
-        }
-        manager.add_strategy(macd_strategy)
-        
-        # 4. Options Straddle Strategy
-        options_strategy = StrategyConfig(
-            name="ATM_Straddle",
-            strategy_type=StrategyType.OPTIONS,
-            description="ATM straddle strategy for high volatility",
-            timeframes=[TimeFrame.MINUTE_5],
-            symbols=["NFO:NIFTY*CE", "NFO:NIFTY*PE"]
-        )
-        options_strategy.add_indicator("ATR", period=14)
-        options_strategy.add_indicator("IV", period=20)  # Implied Volatility
-        options_strategy.parameters = {
-            "min_iv_percentile": 70,    # Enter when IV is above 70th percentile
-            "max_dte": 7,               # Maximum days to expiry
-            "profit_target": 0.25,      # 25% profit target
-            "loss_limit": 0.50          # 50% loss limit
-        }
-        options_strategy.risk_parameters.max_concurrent_positions = 2
-        manager.add_strategy(options_strategy)
-        
-        # 5. Scalping Strategy
-        scalping_strategy = StrategyConfig(
-            name="Quick_Scalp",
-            strategy_type=StrategyType.SCALPING,
-            description="High-frequency scalping strategy",
-            timeframes=[TimeFrame.MINUTE_1],
-            symbols=["NIFTY", "BANKNIFTY"]
-        )
-        scalping_strategy.add_indicator("EMA", period=9)
-        scalping_strategy.add_indicator("EMA", period=21)
-        scalping_strategy.add_indicator("RSI", period=7)
-        scalping_strategy.parameters = {
-            "min_price_movement": 0.001,  # Minimum 0.1% price movement
-            "max_hold_time": 300,         # Maximum 5 minutes hold time
-            "volume_spike_threshold": 1.5  # 1.5x average volume
-        }
-        scalping_strategy.risk_parameters.stop_loss_percent = 0.005  # 0.5% stop loss
-        scalping_strategy.risk_parameters.take_profit_percent = 0.01  # 1% take profit
-        scalping_strategy.risk_parameters.max_daily_trades = 50
-        scalping_strategy.execution_parameters.default_order_type = OrderType.LIMIT
-        manager.add_strategy(scalping_strategy)
-        
-        return manager
-    
-    @classmethod
-    def from_file(cls, config_path: str) -> 'StrategyManager':
-        """Load strategy configurations from YAML file"""
-        manager = cls()
-        
-        config_file = Path(config_path)
-        if not config_file.exists():
-            raise FileNotFoundError(f"Strategy configuration file not found: {config_path}")
-        
-        with open(config_file, 'r', encoding='utf-8') as f:
-            config_data = yaml.safe_load(f)
-        
-        # Load strategies
-        if 'strategies' in config_data:
-            for strategy_data in config_data['strategies']:
-                # Handle indicators separately
-                indicators_data = strategy_data.pop('indicators', [])
-                
-                # Handle risk_parameters separately
-                risk_data = strategy_data.pop('risk_parameters', {})
-                
-                # Handle execution_parameters separately
-                execution_data = strategy_data.pop('execution_parameters', {})
-                
-                # Create strategy
-                strategy = StrategyConfig(**strategy_data)
-                
-                # Add indicators
-                for indicator_data in indicators_data:
-                    indicator = IndicatorConfig(**indicator_data)
-                    strategy.indicators.append(indicator)
-                
-                # Update risk parameters
-                for key, value in risk_data.items():
-                    if hasattr(strategy.risk_parameters, key):
-                        setattr(strategy.risk_parameters, key, value)
-                
-                # Update execution parameters
-                for key, value in execution_data.items():
-                    if hasattr(strategy.execution_parameters, key):
-                        if key == 'default_order_type':
-                            strategy.execution_parameters.default_order_type = OrderType(value)
-                        else:
-                            setattr(strategy.execution_parameters, key, value)
-                
-                manager.add_strategy(strategy)
-        
-        # Load strategy groups
-        if 'strategy_groups' in config_data:
-            manager.strategy_groups = config_data['strategy_groups']
-        
-        return manager
-    
-    def to_dict(self) -> Dict:
-        """Convert strategy manager to dictionary"""
-        return {
-            'strategies': [
-                {
-                    'name': strategy.name,
-                    'strategy_type': strategy.strategy_type.value,
-                    'description': strategy.description,
-                    'timeframes': [tf.value for tf in strategy.timeframes],
-                    'symbols': strategy.symbols,
-                    'indicators': [
-                        {
-                            'name': indicator.name,
-                            'parameters': indicator.parameters,
-                            'enabled': indicator.enabled,
-                            'period': indicator.period,
-                            'source': indicator.source,
-                        }
-                        for indicator in strategy.indicators
-                    ],
-                    'parameters': strategy.parameters,
-                    'risk_parameters': {
-                        'max_position_size': strategy.risk_parameters.max_position_size,
-                        'position_size_percent': strategy.risk_parameters.position_size_percent,
-                        'stop_loss_percent': strategy.risk_parameters.stop_loss_percent,
-                        'trailing_stop_enabled': strategy.risk_parameters.trailing_stop_enabled,
-                        'trailing_stop_percent': strategy.risk_parameters.trailing_stop_percent,
-                        'take_profit_percent': strategy.risk_parameters.take_profit_percent,
-                        'partial_profit_enabled': strategy.risk_parameters.partial_profit_enabled,
-                        'partial_profit_levels': strategy.risk_parameters.partial_profit_levels,
-                        'max_daily_trades': strategy.risk_parameters.max_daily_trades,
-                        'max_concurrent_positions': strategy.risk_parameters.max_concurrent_positions,
-                        'max_drawdown_percent': strategy.risk_parameters.max_drawdown_percent,
-                        'trading_start_time': strategy.risk_parameters.trading_start_time,
-                        'trading_end_time': strategy.risk_parameters.trading_end_time,
-                        'avoid_first_minutes': strategy.risk_parameters.avoid_first_minutes,
-                        'avoid_last_minutes': strategy.risk_parameters.avoid_last_minutes,
-                    },
-                    'execution_parameters': {
-                        'default_order_type': strategy.execution_parameters.default_order_type.value,
-                        'limit_order_offset': strategy.execution_parameters.limit_order_offset,
-                        'order_timeout': strategy.execution_parameters.order_timeout,
-                        'expected_slippage': strategy.execution_parameters.expected_slippage,
-                        'transaction_cost': strategy.execution_parameters.transaction_cost,
-                        'enable_order_modification': strategy.execution_parameters.enable_order_modification,
-                        'max_order_modifications': strategy.execution_parameters.max_order_modifications,
-                        'modification_timeout': strategy.execution_parameters.modification_timeout,
-                    },
-                    'enabled': strategy.enabled,
-                    'paper_trading': strategy.paper_trading,
-                    'track_performance': strategy.track_performance,
-                    'benchmark_symbol': strategy.benchmark_symbol,
-                }
-                for strategy in self.strategies.values()
+            description="MACD Momentum Strategy",
+            symbols=["NIFTY", "BANKNIFTY", "FINNIFTY"],
+            timeframes=["5m", "15m", "1h"],
+            parameters={
+                "fast_ema": 12,
+                "slow_ema": 26,
+                "signal_ema": 9,
+                "histogram_threshold": 0.5
+            },
+            indicators=[
+                IndicatorConfig("MACD", {"fast": 12, "slow": 26, "signal": 9}),
+                IndicatorConfig("EMA", {"period": 50}),
+                IndicatorConfig("Volume", {})
             ],
-            'strategy_groups': self.strategy_groups
-        }
-    
-    def save_to_file(self, config_path: str):
-        """Save strategy configurations to YAML file"""
-        config_file = Path(config_path)
-        config_file.parent.mkdir(parents=True, exist_ok=True)
+            max_position_size=35000.0,
+            stop_loss_pct=0.018,
+            take_profit_pct=0.035,
+            min_confidence=0.68
+        )
+        self.strategies["MACD_Momentum"] = macd_strategy
         
-        with open(config_file, 'w', encoding='utf-8') as f:
-            yaml.dump(self.to_dict(), f, default_flow_style=False, indent=2)
+        # Options Straddle Strategy
+        options_straddle = StrategyConfig(
+            name="Options_Straddle",
+            strategy_type=StrategyType.QUANTITATIVE,
+            description="Options Straddle Strategy for High Volatility",
+            symbols=["NIFTY*", "BANKNIFTY*"],  # * indicates options
+            timeframes=["1m", "5m"],
+            parameters={
+                "iv_threshold": 20.0,
+                "time_to_expiry_min": 7,
+                "time_to_expiry_max": 30,
+                "delta_range": [0.4, 0.6]
+            },
+            indicators=[
+                IndicatorConfig("ImpliedVolatility", {}),
+                IndicatorConfig("Delta", {}),
+                IndicatorConfig("Gamma", {}),
+                IndicatorConfig("Theta", {})
+            ],
+            max_position_size=25000.0,
+            stop_loss_pct=0.25,
+            take_profit_pct=0.50,
+            min_confidence=0.8
+        )
+        self.strategies["Options_Straddle"] = options_straddle
+        
+        # Scalping Strategy
+        scalping_strategy = StrategyConfig(
+            name="Scalping_Quick",
+            strategy_type=StrategyType.MOMENTUM,
+            description="Quick Scalping Strategy for Intraday",
+            symbols=["NIFTY", "BANKNIFTY"],
+            timeframes=["1m", "3m"],
+            parameters={
+                "price_change_threshold": 0.001,
+                "volume_spike_multiplier": 2.0,
+                "max_hold_time": 300,  # 5 minutes
+                "profit_target": 0.005
+            },
+            indicators=[
+                IndicatorConfig("EMA", {"period": 5}),
+                IndicatorConfig("EMA", {"period": 13}),
+                IndicatorConfig("Volume", {}),
+                IndicatorConfig("VWAP", {})
+            ],
+            max_position_size=20000.0,
+            stop_loss_pct=0.005,
+            take_profit_pct=0.01,
+            min_confidence=0.85,
+            signal_cooldown=60  # 1 minute cooldown
+        )
+        self.strategies["Scalping_Quick"] = scalping_strategy
     
-    def validate(self) -> List[str]:
+    def _load_from_environment(self):
+        """Load strategy configurations from environment variables"""
+        # Load enabled strategies
+        enabled_strategies_str = os.getenv('ENABLED_STRATEGIES', 'SMA_Crossover,RSI_MeanReversion')
+        enabled_strategies = [s.strip() for s in enabled_strategies_str.split(',') if s.strip()]
+        
+        # Disable strategies not in enabled list
+        for strategy_name in self.strategies:
+            if strategy_name not in enabled_strategies:
+                self.strategies[strategy_name].enabled = False
+        
+        # Load strategy-specific parameters from environment
+        for strategy_name, strategy in self.strategies.items():
+            self._load_strategy_parameters(strategy_name, strategy)
+    
+    def _load_strategy_parameters(self, strategy_name: str, strategy: StrategyConfig):
+        """Load strategy-specific parameters from environment"""
+        prefix = f"STRATEGY_{strategy_name.upper()}_"
+        
+        # Load max position size
+        max_position_key = f"{prefix}MAX_POSITION_SIZE"
+        if os.getenv(max_position_key):
+            try:
+                strategy.max_position_size = float(os.getenv(max_position_key))
+            except ValueError:
+                pass
+        
+        # Load stop loss percentage
+        stop_loss_key = f"{prefix}STOP_LOSS_PCT"
+        if os.getenv(stop_loss_key):
+            try:
+                strategy.stop_loss_pct = float(os.getenv(stop_loss_key))
+            except ValueError:
+                pass
+        
+        # Load take profit percentage
+        take_profit_key = f"{prefix}TAKE_PROFIT_PCT"
+        if os.getenv(take_profit_key):
+            try:
+                strategy.take_profit_pct = float(os.getenv(take_profit_key))
+            except ValueError:
+                pass
+        
+        # Load minimum confidence
+        min_confidence_key = f"{prefix}MIN_CONFIDENCE"
+        if os.getenv(min_confidence_key):
+            try:
+                strategy.min_confidence = float(os.getenv(min_confidence_key))
+            except ValueError:
+                pass
+        
+        # Load symbols
+        symbols_key = f"{prefix}SYMBOLS"
+        if os.getenv(symbols_key):
+            symbols_str = os.getenv(symbols_key)
+            strategy.symbols = [s.strip() for s in symbols_str.split(',') if s.strip()]
+        
+        # Load timeframes
+        timeframes_key = f"{prefix}TIMEFRAMES"
+        if os.getenv(timeframes_key):
+            timeframes_str = os.getenv(timeframes_key)
+            strategy.timeframes = [t.strip() for t in timeframes_str.split(',') if t.strip()]
+    
+    def get_strategy(self, name: str) -> Optional[StrategyConfig]:
+        """Get strategy configuration by name"""
+        return self.strategies.get(name)
+    
+    def get_enabled_strategies(self) -> List[StrategyConfig]:
+        """Get all enabled strategies"""
+        return [strategy for strategy in self.strategies.values() if strategy.enabled]
+    
+    def get_strategies_by_type(self, strategy_type: StrategyType) -> List[StrategyConfig]:
+        """Get strategies by type"""
+        return [
+            strategy for strategy in self.strategies.values()
+            if strategy.strategy_type == strategy_type and strategy.enabled
+        ]
+    
+    def get_strategies_for_symbol(self, symbol: str) -> List[StrategyConfig]:
+        """Get strategies that trade a specific symbol"""
+        matching_strategies = []
+        
+        for strategy in self.strategies.values():
+            if not strategy.enabled:
+                continue
+            
+            # Check if symbol matches any pattern in strategy symbols
+            for pattern in strategy.symbols:
+                if pattern.endswith('*'):
+                    # Wildcard pattern (e.g., "NIFTY*" matches "NIFTY24000CE")
+                    if symbol.startswith(pattern[:-1]):
+                        matching_strategies.append(strategy)
+                        break
+                elif pattern == symbol:
+                    # Exact match
+                    matching_strategies.append(strategy)
+                    break
+        
+        return matching_strategies
+    
+    def add_strategy(self, strategy: StrategyConfig):
+        """Add a new strategy configuration"""
+        self.strategies[strategy.name] = strategy
+    
+    def remove_strategy(self, name: str):
+        """Remove a strategy configuration"""
+        if name in self.strategies:
+            del self.strategies[name]
+    
+    def enable_strategy(self, name: str):
+        """Enable a strategy"""
+        if name in self.strategies:
+            self.strategies[name].enabled = True
+    
+    def disable_strategy(self, name: str):
+        """Disable a strategy"""
+        if name in self.strategies:
+            self.strategies[name].enabled = False
+    
+    def get_all_strategies(self) -> Dict[str, StrategyConfig]:
+        """Get all strategy configurations"""
+        return dict(self.strategies)
+    
+    def validate_strategies(self) -> List[str]:
         """Validate all strategy configurations"""
         errors = []
         
-        if not self.strategies:
-            errors.append("No strategies configured")
-        
         for name, strategy in self.strategies.items():
-            # Validate basic fields
+            # Check required fields
             if not strategy.name:
-                errors.append(f"Strategy name is empty")
-            
-            if not strategy.timeframes:
-                errors.append(f"No timeframes configured for strategy {name}")
+                errors.append(f"Strategy {name}: Missing name")
             
             if not strategy.symbols:
-                errors.append(f"No symbols configured for strategy {name}")
+                errors.append(f"Strategy {name}: No symbols configured")
             
-            # Validate risk parameters
-            risk = strategy.risk_parameters
-            if risk.max_position_size <= 0:
-                errors.append(f"Invalid max_position_size for strategy {name}")
+            if not strategy.timeframes:
+                errors.append(f"Strategy {name}: No timeframes configured")
             
-            if not (0 < risk.position_size_percent <= 1):
-                errors.append(f"Invalid position_size_percent for strategy {name}")
+            # Check parameter ranges
+            if strategy.min_confidence < 0 or strategy.min_confidence > 1:
+                errors.append(f"Strategy {name}: Invalid min_confidence {strategy.min_confidence}")
             
-            if not (0 < risk.stop_loss_percent < 1):
-                errors.append(f"Invalid stop_loss_percent for strategy {name}")
+            if strategy.stop_loss_pct < 0 or strategy.stop_loss_pct > 1:
+                errors.append(f"Strategy {name}: Invalid stop_loss_pct {strategy.stop_loss_pct}")
             
-            if not (0 < risk.take_profit_percent < 1):
-                errors.append(f"Invalid take_profit_percent for strategy {name}")
+            if strategy.take_profit_pct < 0:
+                errors.append(f"Strategy {name}: Invalid take_profit_pct {strategy.take_profit_pct}")
             
-            # Validate indicators
-            for indicator in strategy.indicators:
-                if not indicator.name:
-                    errors.append(f"Indicator name is empty in strategy {name}")
+            if strategy.max_position_size <= 0:
+                errors.append(f"Strategy {name}: Invalid max_position_size {strategy.max_position_size}")
         
         return errors
