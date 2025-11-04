@@ -8,10 +8,10 @@ This is the main entry point for the MyTrading system. It initializes and runs
 the complete trading orchestrator with all components.
 
 Usage:
-    python main.py [--config config.yaml] [--symbols symbols.yaml]
+    python main.py [--log-level DEBUG] [--dry-run]
     
 Example:
-    python main.py --config config/production.yaml --symbols config/nifty_symbols.yaml
+    python main.py --log-level DEBUG --dry-run
 """
 
 import asyncio
@@ -25,6 +25,26 @@ from typing import Optional
 # Add project root to Python path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
+
+# Load environment variables from .env file (same as historicalfetcher)
+try:
+    from dotenv import load_dotenv
+    # Try to load from mytrading directory first, then from OpenAlgo root
+    env_paths = [
+        os.path.join(os.path.dirname(__file__), '.env'),
+        os.path.join(os.path.dirname(__file__), '..', '.env')
+    ]
+    
+    for env_path in env_paths:
+        if os.path.exists(env_path):
+            load_dotenv(dotenv_path=env_path, override=False)
+            print(f"Loaded environment variables from: {env_path}")
+            break
+    else:
+        print("No .env file found. Using system environment variables only.")
+        
+except ImportError:
+    print("python-dotenv not installed. Using system environment variables only.")
 
 from mytrading.core.orchestrator import TradingOrchestrator
 from mytrading.config.settings import TradingSettings
@@ -58,21 +78,13 @@ class TradingSystemMain:
             
         logger.info("✅ System shutdown complete")
     
-    async def run(self, env_file_path: str):
+    async def run(self):
         """Run the complete trading system"""
         try:
             # Setup signal handlers
             self.setup_signal_handlers()
             
-            # Load environment variables if file exists
-            if os.path.exists(env_file_path):
-                from dotenv import load_dotenv
-                load_dotenv(env_file_path)
-                logger.info(f"📋 Loaded environment variables from: {env_file_path}")
-            else:
-                logger.info("📋 Using system environment variables (no .env file found)")
-            
-            # Load configuration from environment variables
+            # Load configuration from environment variables (already loaded at module level)
             logger.info("📋 Loading configuration from environment...")
             settings = TradingSettings()
             
@@ -104,16 +116,10 @@ def parse_arguments():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py                          # Use default .env file
-  python main.py --env-file production.env  # Use production environment
-  python main.py --log-level DEBUG        # Enable debug logging
+  python main.py                    # Use default settings
+  python main.py --log-level DEBUG  # Enable debug logging
+  python main.py --dry-run          # Run in simulation mode
         """
-    )
-    
-    parser.add_argument(
-        "--env-file", "-e",
-        default=".env",
-        help="Path to environment file (default: .env)"
     )
     
     parser.add_argument(
@@ -133,38 +139,47 @@ Examples:
 
 
 async def main():
-    """Main async entry point"""
-    args = parse_arguments()
+    """Main entry point"""
     
-    # Setup logging
-    setup_logging(level=args.log_level)
-    
-    # Display startup banner
-    logger.info("=" * 80)
-    logger.info("🚀 MYTRADING SYSTEM - ADVANCED REAL-TIME TRADING")
-    logger.info("=" * 80)
-    logger.info(f"📋 Environment File: {args.env_file}")
-    logger.info(f"📝 Log Level: {args.log_level}")
-    logger.info(f"🧪 Dry Run: {'Yes' if args.dry_run else 'No'}")
-    logger.info("=" * 80)
-    
-    # Run the trading system
-    app = TradingSystemMain()
-    await app.run(args.env_file)
+    try:
+        args = parse_arguments()
+        
+        # Setup logging
+        setup_logging(level=args.log_level)
+        
+        # Display startup banner
+        logger.info("=" * 80)
+        logger.info("🚀 MYTRADING SYSTEM - ADVANCED REAL-TIME TRADING")
+        logger.info("=" * 80)
+        logger.info(f"📝 Log Level: {args.log_level}")
+        logger.info(f"🧪 Dry Run: {'Yes' if args.dry_run else 'No'}")
+        logger.info("=" * 80)
+        
+        # Run the trading system
+        app = TradingSystemMain()
+        await app.run()
+        
+    except KeyboardInterrupt:
+        logger.info("⏹️ Process interrupted by user")
+        sys.exit(0)
+        
+    except Exception as e:
+        logger.error(f"💥 Unhandled exception: {e}")
+        logger.error(f"Full traceback: {e}")
+        
+        # Force flush logs before exit
+        try:
+            import time
+            time.sleep(0.2)  # Allow loguru to flush
+        except:
+            pass
+        
+        sys.exit(1)
 
 
 if __name__ == "__main__":
-    try:
-        # Set event loop policy for Windows compatibility
-        if sys.platform == "win32":
-            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
-        
-        # Run the main application
-        asyncio.run(main())
-        
-    except KeyboardInterrupt:
-        logger.info("⏹️ Application interrupted by user")
-        sys.exit(0)
-    except Exception as e:
-        logger.error(f"💥 Application failed: {e}")
-        sys.exit(1)
+    # Set up event loop policy for Windows compatibility (same as historicalfetcher)
+    if sys.platform.startswith('win'):
+        asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    
+    asyncio.run(main())

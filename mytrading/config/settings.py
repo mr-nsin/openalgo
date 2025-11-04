@@ -14,25 +14,7 @@ from typing import Dict, List, Optional, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
-# Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    # Try to load from mytrading directory first, then from OpenAlgo root
-    env_paths = [
-        os.path.join(os.path.dirname(__file__), '..', '.env'),
-        os.path.join(os.path.dirname(__file__), '..', '..', '.env')
-    ]
-    
-    for env_path in env_paths:
-        if os.path.exists(env_path):
-            load_dotenv(dotenv_path=env_path, override=False)
-            print(f"Loaded environment variables from: {env_path}")
-            break
-    else:
-        print("No .env file found. Using system environment variables only.")
-        
-except ImportError:
-    print("python-dotenv not installed. Using system environment variables only.")
+# Environment variables are loaded at module level in main.py (same as historicalfetcher)
 
 
 class TradingMode(str, Enum):

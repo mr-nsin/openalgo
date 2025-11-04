@@ -101,9 +101,9 @@ mytrading/
    python main.py
    ```
 
-2. **With custom environment file**:
+2. **With debug logging**:
    ```bash
-   python main.py --env-file production.env
+   python main.py --log-level DEBUG
    ```
 
 3. **Paper trading mode with debug logging**:
@@ -246,8 +246,11 @@ pytest --cov=mytrading tests/
 The system includes comprehensive paper trading capabilities for strategy validation:
 
 ```bash
-# Start paper trading
-TRADING_MODE=paper python main.py
+# Set TRADING_MODE=paper in .env file, then run:
+python main.py
+
+# Or use dry-run flag for simulation mode:
+python main.py --dry-run
 ```
 
 ## 🔧 Development
