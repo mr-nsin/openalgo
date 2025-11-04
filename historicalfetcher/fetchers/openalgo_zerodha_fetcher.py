@@ -40,7 +40,6 @@ SymToken = openalgo_database_symbol.SymToken
 db_session = openalgo_database_symbol.db_session
 
 from database.auth_db import get_auth_token_broker
-from services.history_service import get_history_simple
 from historicalfetcher.config.openalgo_settings import OpenAlgoSettings, TimeFrame
 from typing import Optional, Dict
 # Import utilities from historicalfetcher package
@@ -176,7 +175,7 @@ class OpenAlgoZerodhaHistoricalFetcher:
                                     
                                     # Create API service instance
                                     api_service = OpenAlgoAPIService(
-                                        api_key=api_key,
+                                        api_key=self.settings.openalgo_api_key,
                                         api_host=self.settings.openalgo_api_host
                                     )
                                     
@@ -257,35 +256,41 @@ class OpenAlgoZerodhaHistoricalFetcher:
                             # Non-retryable error, raise immediately
                             logger.error(f"❌ Non-retryable error for {symbol}: {retry_error}")
                             raise retry_error
-                    
-                    if not success:
-                        raise Exception(f"Failed to fetch historical data: {response_data}")
-                    
-                    # 🔍 DEBUG: Log full response structure
-                    logger.info(f"🔍 FULL RESPONSE for {symbol}: {response_data}")
-                    
-                    # Convert response to DataFrame
-                    data = response_data.get('data', [])
-                    
-                    # 🔍 DEBUG: Log data conversion process
-                    logger.info(f"🔍 DATA CONVERSION for {symbol}: data type = {type(data)}, length = {len(data) if hasattr(data, '__len__') else 'N/A'}")
-                    
-                    # Handle case where data might be a list instead of DataFrame
-                    if isinstance(data, list):
-                        if data:  # If list has data, convert to DataFrame
-                            logger.info(f"🔍 SAMPLE DATA for {symbol}: {data[0] if data else 'None'}")
-                            df = pd.DataFrame(data)
-                            logger.info(f"✅ Converted {len(data)} records to DataFrame for {symbol} - DataFrame shape: {df.shape}")
-                        else:  # If empty list, create empty DataFrame
-                            df = pd.DataFrame()
-                            logger.warning(f"⚠️ Empty data list for {symbol}")
-                    elif isinstance(data, pd.DataFrame):
-                        df = data
-                        logger.info(f"✅ Using existing DataFrame with {len(df)} rows for {symbol}")
-                    else:
-                        # Fallback: create empty DataFrame
+                
+                if not success:
+                    raise Exception(f"Failed to fetch historical data: {response_data}")
+                
+                # 🔍 DEBUG: Log full response structure
+                # logger.info(f"🔍 FULL RESPONSE for {symbol}: {response_data}")
+                logger.info(f"🔍 RESPONSE TYPE: {type(response_data)}")
+                logger.info(f"🔍 RESPONSE KEYS: {list(response_data.keys()) if isinstance(response_data, dict) else 'Not a dict'}")
+                
+                # Convert response to DataFrame
+                data = response_data.get('data', [])
+                logger.info(f"🔍 EXTRACTED DATA TYPE: {type(data)}, LENGTH: {len(data) if hasattr(data, '__len__') else 'N/A'}")
+                
+                # 🔍 DEBUG: Log data conversion process
+                logger.info(f"🔍 DATA CONVERSION for {symbol}: data type = {type(data)}, length = {len(data) if hasattr(data, '__len__') else 'N/A'}")
+                
+                # Handle case where data might be a list instead of DataFrame
+                if isinstance(data, list):
+                    if data:  # If list has data, convert to DataFrame
+                        logger.info(f"🔍 SAMPLE DATA for {symbol}: {data[0] if data else 'None'}")
+                        df = pd.DataFrame(data)
+                        logger.info(f"✅ Converted {len(data)} records to DataFrame for {symbol} - DataFrame shape: {df.shape}")
+                    else:  # If empty list, create empty DataFrame
                         df = pd.DataFrame()
-                        logger.error(f"❌ Unknown data type {type(data)} for {symbol}, creating empty DataFrame")
+                        logger.warning(f"⚠️ Empty data list for {symbol}")
+                elif isinstance(data, pd.DataFrame):
+                    df = data
+                    logger.info(f"✅ Using existing DataFrame with {len(df)} rows for {symbol}")
+                else:
+                    # Fallback: create empty DataFrame
+                    df = pd.DataFrame()
+                    logger.error(f"❌ Unknown data type {type(data)} for {symbol}, creating empty DataFrame")
+                
+                # 🔍 DEBUG: Log before candle conversion
+                logger.info(f"🔍 ABOUT TO CONVERT TO CANDLES: DataFrame shape = {df.shape if not df.empty else 'EMPTY'}")
                 
                 # Convert DataFrame to HistoricalCandle objects (optimized) 
                 if df.empty:
@@ -349,7 +354,6 @@ class OpenAlgoZerodhaHistoricalFetcher:
                 logger.warning(f"⚠️ Empty list provided for candle conversion")
                 return []
             # Convert list to DataFrame
-            import pandas as pd
             df = pd.DataFrame(df)
             logger.info(f"✅ Converted list to DataFrame: {df.shape}")
         elif not isinstance(df, pd.DataFrame):
@@ -573,33 +577,30 @@ class OpenAlgoSymbolManager:
                     
                     liquid_symbols = liquid_query.all()
                     
-                    # Get ALL symbols, not limited by batch_size (batch_size is for processing, not fetching)
-                    # Fetch up to 1000 symbols total (much more reasonable limit)
-                    max_symbols = int(os.getenv('HIST_FETCHER_MAX_SYMBOLS', '1000'))
+                    # 🔥 FETCH ALL SYMBOLS - No artificial limits!
+                    # Get ALL symbols that match the criteria (instrument types and exchanges)
+                    all_query = session.query(SymToken).filter(
+                        SymToken.instrumenttype.in_(self.settings.enabled_instrument_types),
+                        SymToken.exchange.in_(self.settings.enabled_exchanges),
+                        # 🔥 EXCLUDE ETF/NAV SYMBOLS that have limited historical data
+                        ~SymToken.symbol.like('%NAV%'),
+                        ~SymToken.symbol.like('%ETF%'),
+                        ~SymToken.symbol.contains('#'),
+                        ~SymToken.symbol.like('%GOLD%'),
+                        ~SymToken.symbol.like('%SILVER%')
+                    ).order_by(
+                        # Prioritize liquid stocks first, then others
+                        SymToken.symbol.in_(liquid_nse_stocks).desc(),
+                        SymToken.exchange.desc(),  # NSE before BSE
+                        SymToken.symbol.asc()
+                    )
                     
-                    if len(liquid_symbols) < max_symbols:
-                        remaining_limit = max_symbols - len(liquid_symbols)
-                        other_query = session.query(SymToken).filter(
-                            SymToken.instrumenttype.in_(self.settings.enabled_instrument_types),
-                            SymToken.exchange.in_(self.settings.enabled_exchanges),
-                            # 🔥 EXCLUDE ETF/NAV SYMBOLS that have limited historical data
-                            ~SymToken.symbol.like('%NAV%'),
-                            ~SymToken.symbol.like('%ETF%'),
-                            ~SymToken.symbol.contains('#'),
-                            ~SymToken.symbol.like('%GOLD%'),
-                            ~SymToken.symbol.like('%SILVER%'),
-                            ~SymToken.symbol.in_(liquid_nse_stocks)  # Don't duplicate
-                        ).order_by(
-                            SymToken.exchange.desc(),  # NSE before BSE
-                            SymToken.symbol.asc()
-                        ).limit(remaining_limit)  # Use remaining limit, not batch_size
-                        
-                        other_symbols = other_query.all()
-                        all_symbols = liquid_symbols + other_symbols
-                        logger.info(f"📊 Symbol fetching: {len(liquid_symbols)} liquid + {len(other_symbols)} others = {len(all_symbols)} total")
-                        return all_symbols
+                    all_symbols = all_query.all()
+                    liquid_count = len([s for s in all_symbols if s.symbol in liquid_nse_stocks])
+                    other_count = len(all_symbols) - liquid_count
                     
-                    return liquid_symbols
+                    logger.info(f"📊 Symbol fetching: {liquid_count} liquid + {other_count} others = {len(all_symbols)} total (NO LIMITS)")
+                    return all_symbols
             
             symbols = await loop.run_in_executor(None, fetch_symbols)
             

@@ -77,14 +77,14 @@ class OpenAlgoSettings(BaseSettings):
         default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_TIMEFRAMES', '1m,5m,15m,1h,D').split(',')
     )
     
-    # Start with EQ only (removed FUT,CE,PE,INDEX for initial testing)
+    # Expanded instrument types - include all major types
     enabled_instrument_types: List[str] = Field(
-        default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_INSTRUMENT_TYPES', 'EQ').split(',')
+        default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_INSTRUMENT_TYPES', 'EQ,FUT,CE,PE,INDEX').split(',')
     )
     
-    # Start with NSE only (removed BSE,NFO,BFO,NSE_INDEX,BSE_INDEX for initial testing)
+    # Expanded exchanges - include all major exchanges
     enabled_exchanges: List[str] = Field(
-        default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_EXCHANGES', 'NSE').split(',')
+        default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_EXCHANGES', 'NSE,BSE,NFO,BFO').split(',')
     )
     
     # Historical Data Configuration - Reduced from 365 to 30 days for initial testing

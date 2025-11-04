@@ -76,6 +76,13 @@ class OpenAlgoAPIService:
                 # 🔍 DEBUG: Log DataFrame structure after reset
                 logger.info(f"🔍 DataFrame columns after reset: {list(response.columns)}")
                 
+                # 🔥 FIX: Convert Timestamp objects to numeric timestamps for candle conversion
+                if 'timestamp' in response.columns:
+                    # Check if timestamp is Timestamp object and convert to numeric
+                    if hasattr(response['timestamp'].iloc[0], 'timestamp'):
+                        response['timestamp'] = response['timestamp'].apply(lambda x: int(x.timestamp()))
+                        logger.info(f"✅ Converted Timestamp objects to numeric timestamps for {symbol}")
+                
                 # Convert to records format
                 data_records = response.to_dict(orient='records')
                 
