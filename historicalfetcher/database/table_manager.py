@@ -276,7 +276,7 @@ class DynamicTableManager:
             )
             self.created_tables[table_name] = table_info
             
-            logger.info(f"Created optimized table: {table_name} for {symbol_info.instrument_type.value}")
+            logger.info(f"Created optimized table: {table_name} for {symbol_info.instrument_type}")
             
         except Exception as e:
             logger.error(f"Error creating table {table_name}: {e}")

@@ -386,7 +386,6 @@ class OpenAlgoZerodhaHistoricalFetcher:
         candles = []
         
         # Optimize: use vectorized operations where possible
-        import pandas as pd
         
         try:
             # Batch process in chunks for better memory efficiency
@@ -404,7 +403,9 @@ class OpenAlgoZerodhaHistoricalFetcher:
                         if isinstance(row['timestamp'], (int, float)):
                             timestamp = datetime.fromtimestamp(row['timestamp'])
                         else:
-                            timestamp = pd.to_datetime(row['timestamp']).to_pydatetime()
+                            # Fallback: try to parse as datetime string
+                            from datetime import datetime as dt
+                            timestamp = dt.fromisoformat(str(row['timestamp']).replace('Z', '+00:00'))
                         
                         candle = HistoricalCandle(
                             timestamp=timestamp,

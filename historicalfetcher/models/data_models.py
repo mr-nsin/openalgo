@@ -138,6 +138,9 @@ class CalculationConfig:
     enable_parallel_processing: bool = True
     max_workers: int = 4
     
+    # Caching configuration
+    enable_caching: bool = True
+    
     def __post_init__(self):
         """Set default values for list fields"""
         if self.sma_periods is None:
