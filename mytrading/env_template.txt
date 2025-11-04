@@ -1,0 +1,286 @@
+# MyTrading System Environment Configuration
+# ==========================================
+# This template shows the required environment variables for the MyTrading system
+# Copy this file to .env and fill in your actual values
+
+# ============================================================================
+# OPENALGO API CONFIGURATION (REQUIRED)
+# ============================================================================
+# These are the primary credentials needed to authenticate with OpenAlgo
+
+# OpenAlgo API Key - Generated from OpenAlgo web interface
+OPENALGO_API_KEY=4729b0f39e8d894b6667b95ab31994b06a8ce1f2fd40e8e4d1f9a74051d7c75f
+
+# OpenAlgo API Host - URL where your OpenAlgo instance is running
+OPENALGO_API_HOST=http://127.0.0.1:5000
+
+# OpenAlgo WebSocket Configuration
+OPENALGO_WS_HOST=127.0.0.1
+OPENALGO_WS_PORT=8765
+
+# OpenAlgo Database URL - Connection to OpenAlgo's symbol database
+DATABASE_URL=sqlite:///db/openalgo.db
+
+# ============================================================================
+# TRADING SYSTEM CONFIGURATION
+# ============================================================================
+
+# Trading Mode: live, paper, backtest, dry_run
+TRADING_MODE=paper
+
+# System Information
+SYSTEM_NAME=MyTrading
+SYSTEM_VERSION=1.0.0
+
+# ============================================================================
+# ZEROMQ MESSAGING CONFIGURATION
+# ============================================================================
+
+# Base port for ZMQ messaging (other ports will be base_port + 1, +2, etc.)
+ZMQ_BASE_PORT=5555
+
+# ZMQ High Water Mark (max queued messages)
+ZMQ_HIGH_WATER_MARK=10000
+
+# Message timeout in milliseconds
+ZMQ_MESSAGE_TIMEOUT=5000
+
+# ============================================================================
+# PERFORMANCE CONFIGURATION
+# ============================================================================
+
+# Maximum concurrent requests to OpenAlgo API
+MAX_CONCURRENT_REQUESTS=10
+
+# WebSocket batch configuration
+WEBSOCKET_BATCH_SIZE=50
+WEBSOCKET_BATCH_DELAY=0.05
+
+# Maximum WebSocket subscriptions
+MAX_WEBSOCKET_SUBSCRIPTIONS=3000
+
+# Market data buffer size
+MARKET_DATA_BUFFER_SIZE=10000
+
+# Strategy calculation workers
+STRATEGY_CALCULATION_WORKERS=4
+
+# Memory optimization
+ENABLE_MEMORY_OPTIMIZATION=true
+GC_THRESHOLD=1000000
+
+# CPU affinity (comma-separated core numbers, leave empty to disable)
+ENABLE_CPU_AFFINITY=false
+CPU_CORES=
+
+# ============================================================================
+# RISK MANAGEMENT CONFIGURATION
+# ============================================================================
+
+# Position and loss limits
+MAX_POSITION_SIZE=100000.0
+MAX_DAILY_LOSS=10000.0
+MAX_DRAWDOWN=0.05
+
+# Position limits
+MAX_POSITIONS_PER_SYMBOL=5
+MAX_TOTAL_POSITIONS=50
+
+# Order limits
+MAX_ORDER_SIZE=10000.0
+MIN_ORDER_SIZE=100.0
+
+# Stop loss configuration
+DEFAULT_STOP_LOSS=0.02
+TRAILING_STOP_ENABLED=true
+TRAILING_STOP_DISTANCE=0.01
+
+# ============================================================================
+# SYMBOL AND MARKET DATA CONFIGURATION
+# ============================================================================
+
+# Enabled timeframes (comma-separated)
+ENABLED_TIMEFRAMES=tick,1m,5m,15m,1h,1d
+
+# Enabled instrument types (comma-separated)
+ENABLED_INSTRUMENT_TYPES=INDEX,EQ,FUT,CE,PE
+
+# Enabled exchanges (comma-separated)
+ENABLED_EXCHANGES=NSE,BSE,NFO,BFO,NSE_INDEX,BSE_INDEX
+
+# Market data configuration
+ENABLE_TICK_DATA=true
+ENABLE_DEPTH_DATA=true
+DEPTH_LEVELS=5
+
+# Historical data configuration
+ENABLE_HISTORICAL_DATA=true
+HISTORICAL_DAYS=30
+
+# Data validation
+ENABLE_DATA_VALIDATION=true
+MAX_PRICE_CHANGE_PERCENT=10.0
+
+# ============================================================================
+# STRATEGY CONFIGURATION
+# ============================================================================
+
+# Enabled strategies (comma-separated)
+ENABLED_STRATEGIES=SMA_Crossover,RSI_MeanReversion
+
+# Strategy-specific parameters
+SMA_FAST_PERIOD=20
+SMA_SLOW_PERIOD=50
+RSI_PERIOD=14
+RSI_OVERSOLD=30
+RSI_OVERBOUGHT=70
+
+# ============================================================================
+# DATABASE CONFIGURATION
+# ============================================================================
+
+# Database settings
+DATABASE_ENABLED=true
+DATABASE_TYPE=sqlite
+
+# SQLite settings
+SQLITE_PATH=database/trading.db
+
+# PostgreSQL settings (if using PostgreSQL)
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DATABASE=trading
+POSTGRES_USERNAME=
+POSTGRES_PASSWORD=
+
+# Connection pool settings
+DB_POOL_SIZE=10
+DB_MAX_OVERFLOW=20
+DB_POOL_TIMEOUT=30
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+
+# Log level: DEBUG, INFO, WARNING, ERROR
+LOG_LEVEL=INFO
+
+# Console and file logging
+CONSOLE_LOGGING_ENABLED=true
+FILE_LOGGING_ENABLED=true
+
+# File logging settings
+LOG_DIRECTORY=logs
+LOG_FILENAME=trading_{time:YYYY-MM-DD}.log
+LOG_MAX_FILE_SIZE=100 MB
+LOG_RETENTION_DAYS=30
+
+# Specialized logging
+PERFORMANCE_LOGGING=true
+TRADE_LOGGING=true
+ERROR_LOGGING=true
+
+# ============================================================================
+# SYSTEM COMPONENT FLAGS
+# ============================================================================
+
+# Enable/disable system components
+ENABLE_WEBSOCKET=true
+ENABLE_HISTORICAL_DATA=true
+ENABLE_STRATEGY_ENGINE=true
+ENABLE_TRADE_EXECUTION=false
+
+# Monitoring and health checks
+ENABLE_PERFORMANCE_MONITORING=true
+ENABLE_HEALTH_CHECKS=true
+HEALTH_CHECK_INTERVAL=60
+
+# ============================================================================
+# NOTIFICATION CONFIGURATION (OPTIONAL)
+# ============================================================================
+
+# Telegram notifications (reuse OpenAlgo's Telegram bot)
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_IDS=
+
+# Email notifications
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=
+SMTP_PASSWORD=
+EMAIL_RECIPIENTS=
+
+# ============================================================================
+# TRADING HOURS CONFIGURATION
+# ============================================================================
+
+# Market hours (HH:MM format)
+MARKET_OPEN_TIME=09:15
+MARKET_CLOSE_TIME=15:30
+
+# Pre-market and post-market trading
+ENABLE_PREMARKET_TRADING=false
+ENABLE_POSTMARKET_TRADING=false
+
+# Avoid trading in first/last minutes
+AVOID_FIRST_MINUTES=5
+AVOID_LAST_MINUTES=15
+
+# ============================================================================
+# OPTIONS CHAIN CONFIGURATION
+# ============================================================================
+
+# NIFTY options configuration
+NIFTY_ATM_RANGE=20
+NIFTY_STRIKE_STEP=50
+NIFTY_EXPIRY=04NOV25
+
+# BANKNIFTY options configuration
+BANKNIFTY_ATM_RANGE=15
+BANKNIFTY_STRIKE_STEP=100
+
+# Options data settings
+OPTIONS_AUTO_DISCOVER_STRIKES=true
+OPTIONS_AUTO_DISCOVER_EXPIRIES=true
+
+# ============================================================================
+# DEVELOPMENT AND TESTING
+# ============================================================================
+
+# Development mode settings
+DEBUG_MODE=false
+ENABLE_PROFILING=false
+
+# Testing configuration
+ENABLE_BACKTESTING=false
+BACKTEST_START_DATE=2024-01-01
+BACKTEST_END_DATE=2024-12-31
+
+# Paper trading settings
+PAPER_TRADING_INITIAL_CAPITAL=1000000.0
+PAPER_TRADING_COMMISSION=0.0003
+
+# ============================================================================
+# IMPORTANT NOTES:
+# ============================================================================
+# 
+# 1. OPENALGO_API_KEY is the ONLY credential needed
+#    - This key authenticates with OpenAlgo
+#    - OpenAlgo handles broker authentication internally
+# 
+# 2. The trading system works through OpenAlgo's API layer:
+#    - MyTrading -> OpenAlgo API -> Broker API -> Market Data/Orders
+# 
+# 3. Make sure your OpenAlgo instance is running before starting MyTrading
+# 
+# 4. Generate your OPENALGO_API_KEY from OpenAlgo web interface:
+#    - Login to OpenAlgo -> Settings -> API Keys -> Generate New Key
+# 
+# 5. Copy this template to .env and customize:
+#    cp env_template.txt .env
+#    nano .env
+# 
+# 6. For production, use environment variables or secure .env files
+# 
+# 7. Never commit .env files to version control (add to .gitignore)
+#

@@ -1,0 +1,52 @@
+# MyTrading System Requirements
+# ============================
+
+# Core dependencies
+asyncio-mqtt>=0.16.1
+loguru>=0.7.2
+pydantic>=2.5.0
+PyYAML>=6.0.1
+python-dotenv>=1.0.0
+
+# ZeroMQ for messaging
+pyzmq>=25.1.2
+zmq>=0.0.0
+
+# Performance and monitoring
+psutil>=5.9.6
+memory-profiler>=0.61.0
+
+# Data handling
+pandas>=2.1.4
+numpy>=1.25.2
+orjson>=3.9.10  # Fast JSON serialization
+
+# OpenAlgo integration (assuming it's available)
+# openalgo>=1.0.0  # Uncomment when available
+
+# WebSocket client
+websocket-client>=1.6.4
+websockets>=12.0
+
+# HTTP client
+httpx>=0.25.2
+aiohttp>=3.9.1
+
+# Database (optional)
+aiosqlite>=0.19.0
+asyncpg>=0.29.0  # For PostgreSQL if needed
+
+# Testing (development)
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+pytest-mock>=3.12.0
+
+# Development tools
+black>=23.11.0
+isort>=5.12.0
+mypy>=1.7.1
+flake8>=6.1.0
+
+# Optional: Technical analysis
+# TA-Lib>=0.4.28  # Uncomment if technical analysis is needed
+# talib>=0.4.28   # Alternative TA library
