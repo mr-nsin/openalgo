@@ -68,9 +68,9 @@ class OptimizedQuestDBClient:
         )
         
         # Performance optimization - increased batch sizes for better throughput
-        self.batch_insert_size = 2000  # Increased from 1000
+        self.batch_insert_size = getattr(settings, 'batch_size', 2000) if settings else 2000  # Use from settings
         self.connection_pool_size = 30  # Increased from 20
-        self.preferred_batch_size = 5000  # For large inserts
+        self.preferred_batch_size = getattr(settings, 'batch_size', 5000) * 10 if settings else 5000  # 10x batch_size for large inserts
         
         # Connection pool optimization
         self.pool_min_size = 10
@@ -179,39 +179,122 @@ class OptimizedQuestDBClient:
             return 0
         
         try:
-            # Calculate indicators for the data
-            if symbol_info.instrument_type == InstrumentType.EQUITY:
-                indicator_results = await self.indicator_engine.calculate_equity_indicators(
-                    symbol_info, candles, timeframe, market_depth_data
-                )
-            elif symbol_info.instrument_type == InstrumentType.FUTURES:
-                indicator_results = await self.indicator_engine.calculate_futures_indicators(
-                    symbol_info, candles, timeframe, spot_price, market_depth_data
-                )
-            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
-                if spot_price is None:
-                    logger.warning(f"Spot price required for options {symbol_info.symbol}")
-                    spot_price = 0.0
-                indicator_results = await self.indicator_engine.calculate_options_indicators(
-                    symbol_info, candles, timeframe, spot_price, market_depth_data=market_depth_data
-                )
-            elif symbol_info.instrument_type == InstrumentType.INDEX:
-                indicator_results = await self.indicator_engine.calculate_equity_indicators(
-                    symbol_info, candles, timeframe, market_depth_data
-                )
+            # Get or initialize indicator engine
+            indicator_engine = self._get_indicator_engine()
+            
+            # Calculate indicators for the data (with fallback for missing engine)
+            indicator_results = []
+            if indicator_engine:
+                try:
+                    if symbol_info.instrument_type == InstrumentType.EQUITY:
+                        indicator_results = await indicator_engine.calculate_equity_indicators(
+                            symbol_info, candles, timeframe, market_depth_data
+                        )
+                    elif symbol_info.instrument_type == InstrumentType.FUTURES:
+                        indicator_results = await indicator_engine.calculate_futures_indicators(
+                            symbol_info, candles, timeframe, spot_price, market_depth_data
+                        )
+                    elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                        if spot_price is None:
+                            logger.warning(f"Spot price required for options {symbol_info.symbol}")
+                            spot_price = 0.0
+                        indicator_results = await indicator_engine.calculate_options_indicators(
+                            symbol_info, candles, timeframe, spot_price, market_depth_data=market_depth_data
+                        )
+                    elif symbol_info.instrument_type == InstrumentType.INDEX:
+                        indicator_results = await indicator_engine.calculate_equity_indicators(
+                            symbol_info, candles, timeframe, market_depth_data
+                        )
+                    else:
+                        logger.warning(f"Unsupported instrument type: {symbol_info.instrument_type}")
+                        # Continue without indicators instead of returning 0
+                except Exception as indicator_error:
+                    logger.warning(f"Indicator calculation failed for {symbol_info.symbol}: {indicator_error}")
+                    # Continue with basic data insertion without indicators
+                    indicator_results = []
             else:
-                logger.warning(f"Unsupported instrument type: {symbol_info.instrument_type}")
-                return 0
+                logger.debug(f"Indicator engine not available, inserting basic data for {symbol_info.symbol}")
+                # Create basic indicator results from candles
+                indicator_results = []
+                for candle in candles:
+                    from historicalfetcher.models.data_models import IndicatorResult
+                    basic_result = IndicatorResult(
+                        timestamp=candle.timestamp,
+                        indicators={},
+                        greeks={},
+                        market_depth={},
+                        derived_metrics={}
+                    )
+                    indicator_results.append(basic_result)
             
             # Get or create appropriate table
             table_name = await self.table_manager.get_or_create_table(symbol_info)
             
-            # Insert data with indicators
-            return await self._insert_enhanced_data(table_name, symbol_info, indicator_results)
+            # Insert data with indicators (enhanced schema)
+            if indicator_results and len(indicator_results) > 0:
+                return await self._insert_enhanced_data(table_name, symbol_info, indicator_results)
+            else:
+                # Fallback: insert basic OHLCV data without indicators
+                return await self._insert_basic_data(table_name, symbol_info, timeframe, candles)
                 
         except Exception as e:
             self.stats['failed_inserts'] += 1
             logger.error(f"Error upserting data for {symbol_info.symbol}: {e}")
+            raise
+    
+    async def _insert_basic_data(
+        self, 
+        table_name: str, 
+        symbol_info: SymbolInfo, 
+        timeframe: TimeFrame, 
+        candles: List[HistoricalCandle]
+    ) -> int:
+        """Insert basic OHLCV data without complex indicators"""
+        
+        if not candles:
+            return 0
+        
+        try:
+            # Convert timeframe to numeric code
+            from historicalfetcher.models.data_models import TimeFrameCode
+            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            
+            # Prepare basic insert data
+            insert_data = []
+            for candle in candles:
+                data_tuple = (
+                    int(tf_code),
+                    float(candle.open),
+                    float(candle.high),
+                    float(candle.low),
+                    float(candle.close),
+                    int(candle.volume),
+                    candle.timestamp
+                )
+                insert_data.append(data_tuple)
+            
+            # Basic insert query for OHLCV data
+            insert_query = f"""
+                INSERT INTO {table_name} (
+                    tf, open, high, low, close, volume, timestamp
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+            """
+            
+            # Execute batch insert
+            async with self.pool.acquire() as conn:
+                await conn.executemany(insert_query, insert_data)
+            
+            # Update statistics
+            self.stats['total_inserts'] += 1
+            self.stats['successful_inserts'] += 1
+            self.stats['total_records_inserted'] += len(candles)
+            
+            logger.debug(f"Inserted {len(candles)} basic records for {symbol_info.symbol}")
+            return len(candles)
+            
+        except Exception as e:
+            self.stats['failed_inserts'] += 1
+            logger.error(f"Error inserting basic data for {symbol_info.symbol}: {e}")
             raise
     
     async def _insert_enhanced_data(
@@ -220,23 +303,206 @@ class OptimizedQuestDBClient:
         symbol_info: SymbolInfo,
         indicator_results: List[IndicatorResult]
     ) -> int:
-        """Insert data with all calculated indicators and analytics"""
+        """Insert enhanced data with all indicators and analytics"""
         
         if not indicator_results:
             return 0
         
-        # Build insert query based on instrument type
-        if symbol_info.instrument_type == InstrumentType.EQUITY:
-            return await self._insert_enhanced_equity_data(table_name, indicator_results)
-        elif symbol_info.instrument_type == InstrumentType.FUTURES:
-            return await self._insert_enhanced_futures_data(table_name, indicator_results)
-        elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
-            return await self._insert_enhanced_options_data(table_name, indicator_results)
-        elif symbol_info.instrument_type == InstrumentType.INDEX:
-            return await self._insert_enhanced_index_data(table_name, indicator_results)
-        else:
-            logger.warning(f"Unsupported instrument type for enhanced insert")
-            return 0
+        try:
+            # Convert timeframe to numeric code
+            from historicalfetcher.models.data_models import TimeFrameCode
+            
+            # Prepare enhanced insert data based on instrument type
+            if symbol_info.instrument_type == InstrumentType.EQUITY:
+                return await self._insert_enhanced_equity_data(table_name, indicator_results)
+            elif symbol_info.instrument_type == InstrumentType.FUTURES:
+                return await self._insert_enhanced_futures_data(table_name, indicator_results)
+            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                return await self._insert_enhanced_options_data(table_name, indicator_results)
+            elif symbol_info.instrument_type == InstrumentType.INDEX:
+                return await self._insert_enhanced_index_data(table_name, indicator_results)
+            else:
+                # Default to equity
+                return await self._insert_enhanced_equity_data(table_name, indicator_results)
+            
+        except Exception as e:
+            self.stats['failed_inserts'] += 1
+            logger.error(f"Error inserting enhanced data for {symbol_info.symbol}: {e}")
+            raise
+    
+    async def _insert_enhanced_equity_data(
+        self,
+        table_name: str,
+        indicator_results: List[IndicatorResult]
+    ) -> int:
+        """Insert enhanced equity data with full analytics"""
+        
+        insert_data = []
+        for result in indicator_results:
+            # Build comprehensive data tuple for enhanced equity schema
+            data_tuple = (
+                # Basic OHLCV
+                result.timeframe,
+                float(result.open),
+                float(result.high),
+                float(result.low),
+                float(result.close),
+                int(result.volume),
+                
+                # Technical Indicators
+                result.indicators.get('ema_9'),
+                result.indicators.get('ema_21'),
+                result.indicators.get('ema_50'),
+                result.indicators.get('ema_200'),
+                result.indicators.get('sma_20'),
+                result.indicators.get('sma_50'),
+                
+                # Momentum Indicators
+                result.indicators.get('rsi_14'),
+                result.indicators.get('macd_line'),
+                result.indicators.get('macd_signal'),
+                result.indicators.get('macd_histogram'),
+                result.indicators.get('stoch_k'),
+                result.indicators.get('stoch_d'),
+                
+                # Volatility Indicators
+                result.indicators.get('atr_14'),
+                result.indicators.get('bb_upper'),
+                result.indicators.get('bb_middle'),
+                result.indicators.get('bb_lower'),
+                result.indicators.get('bb_width'),
+                result.indicators.get('bb_percent'),
+                
+                # Trend Following Indicators
+                result.indicators.get('supertrend_7_3'),
+                result.indicators.get('supertrend_signal_7_3'),
+                result.indicators.get('supertrend_10_3'),
+                result.indicators.get('supertrend_signal_10_3'),
+                result.indicators.get('parabolic_sar'),
+                
+                # Volume Indicators
+                result.indicators.get('volume_sma_20'),
+                result.indicators.get('vwap'),
+                result.indicators.get('obv'),
+                
+                # Price Action Indicators
+                result.indicators.get('pivot_point'),
+                result.indicators.get('resistance_1'),
+                result.indicators.get('resistance_2'),
+                result.indicators.get('resistance_3'),
+                result.indicators.get('support_1'),
+                result.indicators.get('support_2'),
+                result.indicators.get('support_3'),
+                
+                # Market Microstructure (5 levels) - from market_depth if available
+                result.market_depth.get('bid_1') if result.market_depth else None,
+                result.market_depth.get('bid_qty_1') if result.market_depth else None,
+                result.market_depth.get('bid_2') if result.market_depth else None,
+                result.market_depth.get('bid_qty_2') if result.market_depth else None,
+                result.market_depth.get('bid_3') if result.market_depth else None,
+                result.market_depth.get('bid_qty_3') if result.market_depth else None,
+                result.market_depth.get('bid_4') if result.market_depth else None,
+                result.market_depth.get('bid_qty_4') if result.market_depth else None,
+                result.market_depth.get('bid_5') if result.market_depth else None,
+                result.market_depth.get('bid_qty_5') if result.market_depth else None,
+                
+                result.market_depth.get('ask_1') if result.market_depth else None,
+                result.market_depth.get('ask_qty_1') if result.market_depth else None,
+                result.market_depth.get('ask_2') if result.market_depth else None,
+                result.market_depth.get('ask_qty_2') if result.market_depth else None,
+                result.market_depth.get('ask_3') if result.market_depth else None,
+                result.market_depth.get('ask_qty_3') if result.market_depth else None,
+                result.market_depth.get('ask_4') if result.market_depth else None,
+                result.market_depth.get('ask_qty_4') if result.market_depth else None,
+                result.market_depth.get('ask_5') if result.market_depth else None,
+                result.market_depth.get('ask_qty_5') if result.market_depth else None,
+                
+                # Derived Market Data
+                result.market_depth.get('bid_ask_spread') if result.market_depth else None,
+                result.market_depth.get('bid_ask_spread_pct') if result.market_depth else None,
+                result.market_depth.get('mid_price') if result.market_depth else None,
+                result.market_depth.get('total_bid_qty') if result.market_depth else None,
+                result.market_depth.get('total_ask_qty') if result.market_depth else None,
+                
+                # Additional Analytics
+                result.derived_metrics.get('price_change') if result.derived_metrics else None,
+                result.derived_metrics.get('price_change_pct') if result.derived_metrics else None,
+                result.derived_metrics.get('high_low_pct') if result.derived_metrics else None,
+                
+                result.timestamp
+            )
+            
+            insert_data.append(data_tuple)
+        
+        # Comprehensive equity insert query
+        insert_query = f"""
+            INSERT INTO {table_name} (
+                tf, open, high, low, close, volume,
+                ema_9, ema_21, ema_50, ema_200, sma_20, sma_50,
+                rsi_14, macd_line, macd_signal, macd_histogram, stoch_k, stoch_d,
+                atr_14, bb_upper, bb_middle, bb_lower, bb_width, bb_percent,
+                supertrend_7_3, supertrend_signal_7_3, supertrend_10_3, supertrend_signal_10_3, parabolic_sar,
+                volume_sma_20, vwap, obv,
+                pivot_point, resistance_1, resistance_2, resistance_3, support_1, support_2, support_3,
+                bid_1, bid_qty_1, bid_2, bid_qty_2, bid_3, bid_qty_3, bid_4, bid_qty_4, bid_5, bid_qty_5,
+                ask_1, ask_qty_1, ask_2, ask_qty_2, ask_3, ask_qty_3, ask_4, ask_qty_4, ask_5, ask_qty_5,
+                bid_ask_spread, bid_ask_spread_pct, mid_price, total_bid_qty, total_ask_qty,
+                price_change, price_change_pct, high_low_pct,
+                timestamp
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6,
+                $7, $8, $9, $10, $11, $12,
+                $13, $14, $15, $16, $17, $18,
+                $19, $20, $21, $22, $23, $24,
+                $25, $26, $27, $28, $29,
+                $30, $31, $32,
+                $33, $34, $35, $36, $37, $38, $39,
+                $40, $41, $42, $43, $44, $45, $46, $47, $48, $49,
+                $50, $51, $52, $53, $54, $55, $56, $57, $58, $59,
+                $60, $61, $62, $63, $64,
+                $65, $66, $67,
+                $68
+            )
+        """
+        
+        # Execute batch insert
+        async with self.pool.acquire() as conn:
+            await conn.executemany(insert_query, insert_data)
+        
+        # Update statistics
+        self.stats['total_inserts'] += 1
+        self.stats['successful_inserts'] += 1
+        self.stats['total_records_inserted'] += len(indicator_results)
+        
+        logger.debug(f"Inserted {len(indicator_results)} enhanced equity records")
+        return len(indicator_results)
+    
+    async def _insert_enhanced_futures_data(
+        self,
+        table_name: str,
+        indicator_results: List[IndicatorResult]
+    ) -> int:
+        """Insert enhanced futures data - simplified for now"""
+        # For now, use basic insertion for futures until full implementation
+        return await self._insert_enhanced_equity_data(table_name, indicator_results)
+    
+    async def _insert_enhanced_options_data(
+        self,
+        table_name: str,
+        indicator_results: List[IndicatorResult]
+    ) -> int:
+        """Insert enhanced options data - simplified for now"""
+        # For now, use basic insertion for options until full implementation
+        return await self._insert_enhanced_equity_data(table_name, indicator_results)
+    
+    async def _insert_enhanced_index_data(
+        self,
+        table_name: str,
+        indicator_results: List[IndicatorResult]
+    ) -> int:
+        """Insert enhanced index data - simplified for now"""
+        # For now, use equity insertion for indices
+        return await self._insert_enhanced_equity_data(table_name, indicator_results)
     
     async def _insert_enhanced_equity_data(
         self,
@@ -954,7 +1220,7 @@ class OptimizedQuestDBClient:
             logger.debug(f"Could not get last fetch date for {symbol_info.symbol} ({timeframe}): {e}")
             return None
     
-    async def update_fetch_status(self, symbol_info, timeframe: str, status: str, records_count: int):
+    async def update_fetch_status(self, symbol_info, timeframe: str, status: str, records_count: int = 0):
         """Update fetch status for a symbol and timeframe"""
         try:
             # Create fetch_status table if it doesn't exist

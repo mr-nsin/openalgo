@@ -40,7 +40,7 @@ SymToken = openalgo_database_symbol.SymToken
 db_session = openalgo_database_symbol.db_session
 
 from database.auth_db import get_auth_token_broker
-from services.history_service import get_history_with_auth
+from services.history_service import get_history_simple
 from historicalfetcher.config.openalgo_settings import OpenAlgoSettings, TimeFrame
 from typing import Optional, Dict
 # Import utilities from historicalfetcher package
@@ -152,39 +152,149 @@ class OpenAlgoZerodhaHistoricalFetcher:
                 
                 logger.debug(f"Fetching {timeframe.value} data for {symbol} ({exchange}) from {from_str} to {to_str}")
                 
-                # Use OpenAlgo's history service to fetch historical data
-                # Get auth token for the broker
-                auth_token, broker_name = get_auth_token_broker(self.settings.openalgo_api_key)
-                if not auth_token:
-                    raise Exception(f"Failed to get auth token for API key: {self.settings.openalgo_api_key}")
+                # 🔥 USE SAME SIMPLE APPROACH AS test_history_format.py
+                # Skip complex auth token logic and use OpenAlgo API client directly
+                logger.debug(f"Using simplified OpenAlgo API client approach for {symbol}")
                 
-                # Run in thread pool to avoid blocking
+                
+                # Run in thread pool to avoid blocking with retry logic
                 import concurrent.futures
                 loop = asyncio.get_event_loop()
                 
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    success, response_data, status_code = await loop.run_in_executor(
-                        executor,
-                        lambda: get_history_with_auth(
-                            auth_token=auth_token,
-                            feed_token=None,
-                            broker=broker_name,
-                            symbol=symbol,
-                            exchange=exchange,
-                            interval=zerodha_interval,
-                            start_date=from_str,
-                            end_date=to_str
+                max_retries = getattr(self.settings, 'max_retries', 3)  # Use from settings
+                retry_delay = 1.0
+                df = pd.DataFrame()  # Initialize df outside the loop to avoid UnboundLocalError
+                
+                for attempt in range(max_retries):
+                    try:
+                        # 🔥 USE EXACT SAME APPROACH AS test_history_format.py
+                        with concurrent.futures.ThreadPoolExecutor() as executor:
+                            def make_simple_api_call():
+                                try:
+                                    # 🔥 USE DEDICATED HISTORICALFETCHER API SERVICE (no changes to main OpenAlgo code)
+                                    from historicalfetcher.services.openalgo_api_service import OpenAlgoAPIService
+                                    
+                                    # Create API service instance
+                                    api_service = OpenAlgoAPIService(
+                                        api_key=api_key,
+                                        api_host=self.settings.openalgo_api_host
+                                    )
+                                    
+                                    # Call through dedicated service
+                                    success, response_data, status_code = api_service.get_historical_data(
+                                        symbol=symbol,
+                                        exchange=exchange,
+                                        interval=zerodha_interval,
+                                        start_date=from_str,
+                                        end_date=to_str
+                                    )
+                                    
+                                    return success, response_data, status_code
+                                        
+                                except Exception as e:
+                                    error_msg = str(e)
+                                    if "too many requests" in error_msg.lower() or "429" in error_msg:
+                                        return False, {
+                                            'status': 'error',
+                                            'message': 'API Error: Too many requests'
+                                        }, 429
+                                    else:
+                                        return False, {
+                                            'status': 'error',
+                                            'message': str(e)
+                                        }, 500
+                            
+                            success, response_data, status_code = await loop.run_in_executor(
+                                executor, make_simple_api_call
+                            )
+                            # Log the actual API response for debugging
+                            logger.debug(f"API call successful for {symbol}: success={success}, status_code={status_code}")
+                            if not success:
+                                logger.warning(f"API returned failure for {symbol}: {response_data}")
+                            else:
+                                # 🔍 LOG FIRST RECORD OF EVERY SUCCESSFUL API RESPONSE
+                                data = response_data.get('data', [])
+                                if data and len(data) > 0:
+                                    first_record = data[0]
+                                    logger.info(f"📊 FIRST RECORD for {symbol} ({exchange}, {zerodha_interval}): {first_record}")
+                                    logger.info(f"📈 Total records received for {symbol}: {len(data)}")
+                                else:
+                                    logger.warning(f"⚠️ No data records received for {symbol}")
+                            break  # Success, exit retry loop
+                    except Exception as retry_error:
+                        error_msg = str(retry_error)
+                        
+                        # Log the actual exception details for debugging
+                        logger.error(f"API call exception for {symbol} (attempt {attempt + 1}/{max_retries}): {type(retry_error).__name__}: {retry_error}")
+                        
+                        # Check if it's a retryable error
+                        is_retryable = (
+                            "WinError 10035" in error_msg or 
+                            "non-blocking socket operation could not be completed" in error_msg or
+                            "timeout" in error_msg.lower() or
+                            "ConnectionError" in error_msg or
+                            "Too many requests" in error_msg or  # 🔥 HANDLE RATE LIMITING ERRORS
+                            "429" in error_msg or  # HTTP 429 Too Many Requests
+                            "rate limit" in error_msg.lower()
                         )
-                    )
+                        
+                        if is_retryable:
+                            if attempt < max_retries - 1:
+                                # Special handling for rate limiting errors
+                                if "Too many requests" in error_msg or "429" in error_msg or "rate limit" in error_msg.lower():
+                                    backoff_time = retry_delay * (3 ** attempt)  # More aggressive backoff for rate limits
+                                    logger.warning(f"🚨 RATE LIMIT ERROR on attempt {attempt + 1}/{max_retries} for {symbol}. Backing off for {backoff_time:.1f}s: {retry_error}")
+                                else:
+                                    backoff_time = retry_delay * (2 ** attempt)  # Standard exponential backoff
+                                    logger.warning(f"Retryable error on attempt {attempt + 1}/{max_retries} for {symbol}. Backing off for {backoff_time:.1f}s: {retry_error}")
+                                
+                                await asyncio.sleep(backoff_time)
+                                continue
+                            else:
+                                logger.error(f"❌ Max retries exceeded for {symbol} after {max_retries} attempts: {retry_error}")
+                                raise retry_error
+                        else:
+                            # Non-retryable error, raise immediately
+                            logger.error(f"❌ Non-retryable error for {symbol}: {retry_error}")
+                            raise retry_error
                     
                     if not success:
                         raise Exception(f"Failed to fetch historical data: {response_data}")
                     
+                    # 🔍 DEBUG: Log full response structure
+                    logger.info(f"🔍 FULL RESPONSE for {symbol}: {response_data}")
+                    
                     # Convert response to DataFrame
-                    df = response_data.get('data', pd.DataFrame())
+                    data = response_data.get('data', [])
+                    
+                    # 🔍 DEBUG: Log data conversion process
+                    logger.info(f"🔍 DATA CONVERSION for {symbol}: data type = {type(data)}, length = {len(data) if hasattr(data, '__len__') else 'N/A'}")
+                    
+                    # Handle case where data might be a list instead of DataFrame
+                    if isinstance(data, list):
+                        if data:  # If list has data, convert to DataFrame
+                            logger.info(f"🔍 SAMPLE DATA for {symbol}: {data[0] if data else 'None'}")
+                            df = pd.DataFrame(data)
+                            logger.info(f"✅ Converted {len(data)} records to DataFrame for {symbol} - DataFrame shape: {df.shape}")
+                        else:  # If empty list, create empty DataFrame
+                            df = pd.DataFrame()
+                            logger.warning(f"⚠️ Empty data list for {symbol}")
+                    elif isinstance(data, pd.DataFrame):
+                        df = data
+                        logger.info(f"✅ Using existing DataFrame with {len(df)} rows for {symbol}")
+                    else:
+                        # Fallback: create empty DataFrame
+                        df = pd.DataFrame()
+                        logger.error(f"❌ Unknown data type {type(data)} for {symbol}, creating empty DataFrame")
                 
-                # Convert DataFrame to HistoricalCandle objects (optimized)
-                candles = await self._dataframe_to_candles_async(df)
+                # Convert DataFrame to HistoricalCandle objects (optimized) 
+                if df.empty:
+                    logger.warning(f"❌ EMPTY DATAFRAME for {symbol} ({timeframe.value}) from {from_str} to {to_str}")
+                    candles = []
+                else:
+                    logger.info(f"🔄 Converting DataFrame with {len(df)} rows to candles for {symbol}")
+                    candles = await self._dataframe_to_candles_async(df)
+                    logger.info(f"✅ CONVERSION SUCCESS: {len(candles)} candles created for {symbol}")
                 
                 self.stats['total_requests'] += 1
                 self.stats['successful_requests'] += 1
@@ -230,7 +340,43 @@ class OpenAlgoZerodhaHistoricalFetcher:
     async def _dataframe_to_candles_async(self, df) -> List[HistoricalCandle]:
         """Convert pandas DataFrame to HistoricalCandle objects (optimized async version)"""
         
+        # 🔍 DEBUG: Log input type and size
+        logger.info(f"🔍 CANDLE CONVERSION INPUT: type = {type(df)}, size = {len(df) if hasattr(df, '__len__') else 'N/A'}")
+        
+        # Handle case where df might be a list instead of DataFrame
+        if isinstance(df, list):
+            if not df:  # Empty list
+                logger.warning(f"⚠️ Empty list provided for candle conversion")
+                return []
+            # Convert list to DataFrame
+            import pandas as pd
+            df = pd.DataFrame(df)
+            logger.info(f"✅ Converted list to DataFrame: {df.shape}")
+        elif not isinstance(df, pd.DataFrame):
+            # If it's neither list nor DataFrame, return empty
+            logger.error(f"❌ Invalid input type for candle conversion: {type(df)}")
+            return []
+        
         if df.empty:
+            logger.warning(f"⚠️ Empty DataFrame provided for candle conversion")
+            return []
+        
+        # 🔍 DEBUG: Log DataFrame details
+        logger.info(f"🔍 DataFrame details: shape = {df.shape}, columns = {list(df.columns)}")
+        
+        # Check required columns (timestamp might be missing from API response)
+        required_columns = ['open', 'high', 'low', 'close', 'volume']
+        missing_columns = [col for col in required_columns if col not in df.columns]
+        if missing_columns:
+            logger.error(f"❌ Missing required columns: {missing_columns}")
+            logger.error(f"Available columns: {list(df.columns)}")
+            return []
+        
+        # Verify timestamp column exists (should be fixed by OpenAlgo API service)
+        if 'timestamp' not in df.columns:
+            logger.error(f"❌ CRITICAL: Still missing timestamp column after API service fix!")
+            logger.error(f"Available columns: {list(df.columns)}")
+            logger.error(f"DataFrame index: {df.index.name}")
             return []
         
         candles = []
@@ -283,15 +429,21 @@ class OpenAlgoZerodhaHistoricalFetcher:
         return candles
     
     async def _enforce_rate_limit(self):
-        """Enforce rate limiting between requests (optimized)"""
+        """Enforce rate limiting between requests with improved backoff"""
         current_time = asyncio.get_event_loop().time()
         time_since_last_request = current_time - self._last_request_time
         
-        if time_since_last_request < self._min_request_interval:
-            sleep_time = self._min_request_interval - time_since_last_request
+        # Minimum interval between requests (more conservative)
+        min_interval = self._min_request_interval
+        
+        if time_since_last_request < min_interval:
+            sleep_time = min_interval - time_since_last_request
             if sleep_time > 0:
+                logger.debug(f"⏱️ Rate limiting: sleeping for {sleep_time:.2f}s")
                 await asyncio.sleep(sleep_time)
         
+        # Add extra buffer for broker API stability (increased for rate limiting)
+        await asyncio.sleep(2.0)  # 2 second extra buffer to prevent rate limiting
         self._last_request_time = asyncio.get_event_loop().time()
     
     async def fetch_multiple_symbols(
@@ -402,19 +554,59 @@ class OpenAlgoSymbolManager:
             
             def fetch_symbols():
                 with db_session() as session:
-                    # Query symbols based on enabled instrument types and exchanges
-                    query = session.query(SymToken).filter(
+                    # 🔥 PRIORITIZE LIQUID STOCKS - Start with proven liquid NSE stocks
+                    liquid_nse_stocks = [
+                        'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK',
+                        'BHARTIARTL', 'SBIN', 'LT', 'ITC', 'KOTAKBANK',
+                        'HINDUNILVR', 'ASIANPAINT', 'MARUTI', 'BAJFINANCE', 'HCLTECH',
+                        'AXISBANK', 'WIPRO', 'ULTRACEMCO', 'NESTLEIND', 'TITAN',
+                        'ADANIPORTS', 'COALINDIA', 'NTPC', 'ONGC', 'POWERGRID',
+                        'SUNPHARMA', 'TECHM', 'GRASIM', 'JSWSTEEL', 'TATAMOTORS'
+                    ]
+                    
+                    # First, get liquid NSE stocks that we know work
+                    liquid_query = session.query(SymToken).filter(
                         SymToken.instrumenttype.in_(self.settings.enabled_instrument_types),
-                        SymToken.exchange.in_(self.settings.enabled_exchanges)
-                    )
-                    return query.all()
+                        SymToken.exchange == 'NSE',  # NSE only for liquid stocks
+                        SymToken.symbol.in_(liquid_nse_stocks)
+                    ).order_by(SymToken.symbol.asc())
+                    
+                    liquid_symbols = liquid_query.all()
+                    
+                    # Get ALL symbols, not limited by batch_size (batch_size is for processing, not fetching)
+                    # Fetch up to 1000 symbols total (much more reasonable limit)
+                    max_symbols = int(os.getenv('HIST_FETCHER_MAX_SYMBOLS', '1000'))
+                    
+                    if len(liquid_symbols) < max_symbols:
+                        remaining_limit = max_symbols - len(liquid_symbols)
+                        other_query = session.query(SymToken).filter(
+                            SymToken.instrumenttype.in_(self.settings.enabled_instrument_types),
+                            SymToken.exchange.in_(self.settings.enabled_exchanges),
+                            # 🔥 EXCLUDE ETF/NAV SYMBOLS that have limited historical data
+                            ~SymToken.symbol.like('%NAV%'),
+                            ~SymToken.symbol.like('%ETF%'),
+                            ~SymToken.symbol.contains('#'),
+                            ~SymToken.symbol.like('%GOLD%'),
+                            ~SymToken.symbol.like('%SILVER%'),
+                            ~SymToken.symbol.in_(liquid_nse_stocks)  # Don't duplicate
+                        ).order_by(
+                            SymToken.exchange.desc(),  # NSE before BSE
+                            SymToken.symbol.asc()
+                        ).limit(remaining_limit)  # Use remaining limit, not batch_size
+                        
+                        other_symbols = other_query.all()
+                        all_symbols = liquid_symbols + other_symbols
+                        logger.info(f"📊 Symbol fetching: {len(liquid_symbols)} liquid + {len(other_symbols)} others = {len(all_symbols)} total")
+                        return all_symbols
+                    
+                    return liquid_symbols
             
             symbols = await loop.run_in_executor(None, fetch_symbols)
             
             logger.info(f"Found {len(symbols)} symbols in OpenAlgo database")
             
             # Process symbols asynchronously in batches
-            batch_size = 1000
+            batch_size = self.settings.batch_size  # Use from settings
             for i in range(0, len(symbols), batch_size):
                 batch = symbols[i:i + batch_size]
                 

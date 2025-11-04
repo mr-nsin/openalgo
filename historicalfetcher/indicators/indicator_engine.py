@@ -33,8 +33,8 @@ class InstrumentType(str, Enum):
     CALL_OPTION = "CE"
     PUT_OPTION = "PE"
     INDEX = "INDEX"
-from historicalfetcher.indicators.numba_indicators import NumbaIndicators, TimeFrameOptimizedIndicators, NumbaOptimizer
-from historicalfetcher.indicators.options_greeks import OptionsGreeksCalculator, ImpliedVolatilityCalculator, AdvancedGreeks
+from historicalfetcher.indicators.numba_indicators import NumbaIndicators
+from historicalfetcher.indicators.options_greeks import OptionsGreeksCalculator
 from historicalfetcher.models.data_models import TimeFrameCode, OptionTypeCode, IndicatorResult, CalculationConfig
 
 # Logger is imported from loguru above
@@ -63,8 +63,16 @@ class IndicatorEngine:
             'average_calculation_time': 0.0
         }
         
-        # Warm up Numba functions
-        NumbaOptimizer.warm_up_functions()
+        # Initialize Numba indicators
+        self.numba_indicators = NumbaIndicators()
+        
+        # Initialize options calculator if needed
+        if self.config.enable_greeks:
+            try:
+                self.options_calculator = OptionsGreeksCalculator()
+            except Exception as e:
+                logger.warning(f"Options calculator initialization failed: {e}")
+                self.options_calculator = None
         
         logger.info("Indicator Engine initialized with optimized Numba functions")
     
@@ -631,6 +639,325 @@ class IndicatorEngine:
         self.executor.shutdown(wait=True)
         self.clear_cache()
         logger.info("Indicator Engine cleaned up")
+    
+    def _candles_to_arrays(self, candles: List[HistoricalCandle]) -> Dict[str, np.ndarray]:
+        """Convert candles to numpy arrays for efficient processing"""
+        
+        opens = np.array([c.open for c in candles], dtype=np.float64)
+        highs = np.array([c.high for c in candles], dtype=np.float64)
+        lows = np.array([c.low for c in candles], dtype=np.float64)
+        closes = np.array([c.close for c in candles], dtype=np.float64)
+        volumes = np.array([c.volume for c in candles], dtype=np.int64)
+        
+        return {
+            'open': opens,
+            'high': highs,
+            'low': lows,
+            'close': closes,
+            'volume': volumes,
+            'timestamps': [c.timestamp for c in candles]
+        }
+    
+    async def _calculate_technical_indicators(
+        self, 
+        ohlcv_data: Dict[str, np.ndarray], 
+        timeframe: TimeFrame, 
+        instrument_type: str
+    ) -> Dict[str, np.ndarray]:
+        """Calculate technical indicators using Numba-optimized functions"""
+        
+        indicators = {}
+        
+        try:
+            closes = ohlcv_data['close']
+            highs = ohlcv_data['high']
+            lows = ohlcv_data['low']
+            volumes = ohlcv_data['volume']
+            
+            # Moving Averages
+            if self.config.enable_ema:
+                indicators['ema_9'] = self.numba_indicators.ema(closes, 9)
+                indicators['ema_21'] = self.numba_indicators.ema(closes, 21)
+                indicators['ema_50'] = self.numba_indicators.ema(closes, 50)
+                indicators['ema_200'] = self.numba_indicators.ema(closes, 200)
+            
+            if self.config.enable_sma:
+                indicators['sma_20'] = self.numba_indicators.sma(closes, 20)
+                indicators['sma_50'] = self.numba_indicators.sma(closes, 50)
+            
+            # Momentum Indicators
+            if self.config.enable_rsi:
+                indicators['rsi_14'] = self.numba_indicators.rsi(closes, 14)
+            
+            if self.config.enable_macd:
+                macd_line, macd_signal, macd_histogram = self.numba_indicators.macd(closes, 12, 26, 9)
+                indicators['macd_line'] = macd_line
+                indicators['macd_signal'] = macd_signal
+                indicators['macd_histogram'] = macd_histogram
+            
+            # Volatility Indicators
+            if self.config.enable_atr:
+                indicators['atr_14'] = self.numba_indicators.atr(highs, lows, closes, 14)
+            
+            if self.config.enable_bollinger:
+                bb_upper, bb_middle, bb_lower = self.numba_indicators.bollinger_bands(closes, 20, 2.0)
+                indicators['bb_upper'] = bb_upper
+                indicators['bb_middle'] = bb_middle
+                indicators['bb_lower'] = bb_lower
+                indicators['bb_width'] = (bb_upper - bb_lower) / bb_middle * 100
+                indicators['bb_percent'] = (closes - bb_lower) / (bb_upper - bb_lower) * 100
+            
+            # Stochastic
+            if self.config.enable_stochastic:
+                stoch_k, stoch_d = self.numba_indicators.stochastic(highs, lows, closes, 14, 3)
+                indicators['stoch_k'] = stoch_k
+                indicators['stoch_d'] = stoch_d
+            
+            # Volume indicators
+            indicators['volume_sma_20'] = self.numba_indicators.sma(volumes.astype(np.float64), 20)
+            indicators['vwap'] = self._calculate_vwap(ohlcv_data)
+            indicators['obv'] = self._calculate_obv(closes, volumes)
+            
+            # Trend following indicators
+            indicators['supertrend_7_3'], indicators['supertrend_signal_7_3'] = self._calculate_supertrend(
+                highs, lows, closes, 7, 3.0
+            )
+            indicators['supertrend_10_3'], indicators['supertrend_signal_10_3'] = self._calculate_supertrend(
+                highs, lows, closes, 10, 3.0
+            )
+            indicators['parabolic_sar'] = self._calculate_parabolic_sar(highs, lows, closes)
+            
+            # Pivot points (daily only)
+            if timeframe == TimeFrame.DAILY:
+                pivot_data = self._calculate_pivot_points(highs, lows, closes)
+                indicators.update(pivot_data)
+            
+        except Exception as e:
+            logger.error(f"Error calculating technical indicators: {e}")
+            # Return empty indicators on error
+            return {}
+        
+        return indicators
+    
+    def _calculate_derived_metrics(
+        self, 
+        ohlcv_data: Dict[str, np.ndarray], 
+        indicators: Dict[str, np.ndarray]
+    ) -> Dict[str, np.ndarray]:
+        """Calculate derived metrics from OHLCV and indicators"""
+        
+        derived = {}
+        
+        try:
+            closes = ohlcv_data['close']
+            highs = ohlcv_data['high']
+            lows = ohlcv_data['low']
+            
+            # Price changes
+            price_changes = np.diff(closes, prepend=closes[0])
+            derived['price_change'] = price_changes
+            derived['price_change_pct'] = (price_changes / np.roll(closes, 1)) * 100
+            derived['price_change_pct'][0] = 0.0  # First value is 0
+            
+            # High-Low percentage
+            derived['high_low_pct'] = ((highs - lows) / closes) * 100
+            
+        except Exception as e:
+            logger.error(f"Error calculating derived metrics: {e}")
+        
+        return derived
+    
+    def _calculate_vwap(self, ohlcv_data: Dict[str, np.ndarray]) -> np.ndarray:
+        """Calculate Volume Weighted Average Price"""
+        
+        typical_price = (ohlcv_data['high'] + ohlcv_data['low'] + ohlcv_data['close']) / 3
+        volume = ohlcv_data['volume'].astype(np.float64)
+        
+        cumulative_pv = np.cumsum(typical_price * volume)
+        cumulative_volume = np.cumsum(volume)
+        
+        # Avoid division by zero
+        vwap = np.where(cumulative_volume != 0, cumulative_pv / cumulative_volume, typical_price)
+        
+        return vwap
+    
+    def _calculate_obv(self, closes: np.ndarray, volumes: np.ndarray) -> np.ndarray:
+        """Calculate On Balance Volume"""
+        
+        obv = np.zeros_like(volumes, dtype=np.float64)
+        obv[0] = volumes[0]
+        
+        for i in range(1, len(closes)):
+            if closes[i] > closes[i-1]:
+                obv[i] = obv[i-1] + volumes[i]
+            elif closes[i] < closes[i-1]:
+                obv[i] = obv[i-1] - volumes[i]
+            else:
+                obv[i] = obv[i-1]
+        
+        return obv
+    
+    def _calculate_supertrend(
+        self, 
+        highs: np.ndarray, 
+        lows: np.ndarray, 
+        closes: np.ndarray, 
+        period: int, 
+        multiplier: float
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Calculate Supertrend indicator"""
+        
+        # Calculate ATR
+        atr = self.numba_indicators.atr(highs, lows, closes, period)
+        
+        # Calculate basic bands
+        hl2 = (highs + lows) / 2
+        upper_band = hl2 + (multiplier * atr)
+        lower_band = hl2 - (multiplier * atr)
+        
+        # Initialize arrays
+        supertrend = np.zeros_like(closes)
+        signals = np.zeros_like(closes, dtype=np.int8)
+        
+        # Calculate supertrend
+        for i in range(1, len(closes)):
+            # Upper band calculation
+            if upper_band[i] < upper_band[i-1] or closes[i-1] > upper_band[i-1]:
+                upper_band[i] = upper_band[i]
+            else:
+                upper_band[i] = upper_band[i-1]
+            
+            # Lower band calculation
+            if lower_band[i] > lower_band[i-1] or closes[i-1] < lower_band[i-1]:
+                lower_band[i] = lower_band[i]
+            else:
+                lower_band[i] = lower_band[i-1]
+            
+            # Supertrend calculation
+            if closes[i] <= lower_band[i]:
+                supertrend[i] = lower_band[i]
+                signals[i] = 0  # Sell signal
+            elif closes[i] >= upper_band[i]:
+                supertrend[i] = upper_band[i]
+                signals[i] = 1  # Buy signal
+            else:
+                supertrend[i] = supertrend[i-1]
+                signals[i] = signals[i-1]
+        
+        return supertrend, signals
+    
+    def _calculate_parabolic_sar(
+        self, 
+        highs: np.ndarray, 
+        lows: np.ndarray, 
+        closes: np.ndarray,
+        af_start: float = 0.02,
+        af_increment: float = 0.02,
+        af_max: float = 0.2
+    ) -> np.ndarray:
+        """Calculate Parabolic SAR"""
+        
+        sar = np.zeros_like(closes)
+        trend = np.ones_like(closes, dtype=np.int8)  # 1 for uptrend, -1 for downtrend
+        af = af_start
+        ep = highs[0]  # Extreme point
+        
+        sar[0] = lows[0]
+        
+        for i in range(1, len(closes)):
+            # Calculate SAR
+            sar[i] = sar[i-1] + af * (ep - sar[i-1])
+            
+            # Check for trend reversal
+            if trend[i-1] == 1:  # Uptrend
+                if lows[i] <= sar[i]:
+                    # Trend reversal to downtrend
+                    trend[i] = -1
+                    sar[i] = ep
+                    ep = lows[i]
+                    af = af_start
+                else:
+                    trend[i] = 1
+                    if highs[i] > ep:
+                        ep = highs[i]
+                        af = min(af + af_increment, af_max)
+            else:  # Downtrend
+                if highs[i] >= sar[i]:
+                    # Trend reversal to uptrend
+                    trend[i] = 1
+                    sar[i] = ep
+                    ep = highs[i]
+                    af = af_start
+                else:
+                    trend[i] = -1
+                    if lows[i] < ep:
+                        ep = lows[i]
+                        af = min(af + af_increment, af_max)
+        
+        return sar
+    
+    def _calculate_pivot_points(
+        self, 
+        highs: np.ndarray, 
+        lows: np.ndarray, 
+        closes: np.ndarray
+    ) -> Dict[str, np.ndarray]:
+        """Calculate daily pivot points"""
+        
+        # Use previous day's HLC for pivot calculation
+        prev_high = np.roll(highs, 1)
+        prev_low = np.roll(lows, 1)
+        prev_close = np.roll(closes, 1)
+        
+        # Set first values
+        prev_high[0] = highs[0]
+        prev_low[0] = lows[0]
+        prev_close[0] = closes[0]
+        
+        # Calculate pivot point
+        pivot = (prev_high + prev_low + prev_close) / 3
+        
+        # Calculate support and resistance levels
+        r1 = 2 * pivot - prev_low
+        s1 = 2 * pivot - prev_high
+        r2 = pivot + (prev_high - prev_low)
+        s2 = pivot - (prev_high - prev_low)
+        r3 = prev_high + 2 * (pivot - prev_low)
+        s3 = prev_low - 2 * (prev_high - pivot)
+        
+        return {
+            'pivot_point': pivot,
+            'resistance_1': r1,
+            'resistance_2': r2,
+            'resistance_3': r3,
+            'support_1': s1,
+            'support_2': s2,
+            'support_3': s3
+        }
+    
+    def _calculate_futures_metrics(
+        self, 
+        ohlcv_data: Dict[str, np.ndarray], 
+        spot_price: Optional[float]
+    ) -> Dict[str, np.ndarray]:
+        """Calculate futures-specific metrics"""
+        
+        metrics = {}
+        
+        if spot_price:
+            closes = ohlcv_data['close']
+            
+            # Basis calculation
+            basis = closes - spot_price
+            basis_pct = (basis / spot_price) * 100
+            
+            metrics['basis'] = np.full_like(closes, basis[-1])  # Use latest basis
+            metrics['basis_pct'] = np.full_like(closes, basis_pct[-1])
+            
+            # Simple cost of carry estimation (placeholder)
+            metrics['cost_of_carry'] = np.full_like(closes, 0.06)  # 6% annual rate
+        
+        return metrics
 
 class BatchIndicatorProcessor:
     """Process indicators for multiple symbols in parallel"""

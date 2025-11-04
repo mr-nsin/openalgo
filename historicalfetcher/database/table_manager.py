@@ -250,7 +250,7 @@ class DynamicTableManager:
         """Create optimized table for specific instrument type"""
         
         try:
-            # Get appropriate enhanced schema
+            # Get appropriate enhanced schema with full analytics
             if symbol_info.instrument_type == InstrumentType.EQUITY:
                 schema = EnhancedTableSchemas.get_enhanced_equity_schema(table_name)
             elif symbol_info.instrument_type == InstrumentType.FUTURES:

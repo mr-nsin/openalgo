@@ -373,9 +373,9 @@ class OpenAlgoHistoricalDataFetcher:
                     if candles:
                         # Store in QuestDB
                         async with AsyncTimer(self.performance_monitor, f'store_{timeframe.value}'):
-                            records_inserted = await self.questdb_client.upsert_historical_data(
+                            records_inserted = await self.questdb_client.upsert_historical_data_with_indicators(
                                 symbol_info,
-                                timeframe.value,
+                                timeframe,
                                 candles
                             )
                         
@@ -414,8 +414,7 @@ class OpenAlgoHistoricalDataFetcher:
                     symbol_info,
                     timeframe.value,
                     'error',
-                    0,
-                    str(e)
+                    0
                 )
         
         return total_records
