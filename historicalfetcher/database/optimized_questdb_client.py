@@ -216,10 +216,18 @@ class OptimizedQuestDBClient:
                 logger.debug(f"Indicator engine not available, inserting basic data for {symbol_info.symbol}")
                 # Create basic indicator results from candles
                 indicator_results = []
+                tf_string = TimeFrameCode.to_string(timeframe)
                 for candle in candles:
                     from historicalfetcher.models.data_models import IndicatorResult
                     basic_result = IndicatorResult(
+                        symbol=symbol_info.symbol,
+                        timeframe=tf_string,
                         timestamp=candle.timestamp,
+                        open=candle.open,
+                        high=candle.high,
+                        low=candle.low,
+                        close=candle.close,
+                        volume=candle.volume,
                         indicators={},
                         greeks={},
                         market_depth={},
@@ -255,15 +263,15 @@ class OptimizedQuestDBClient:
             return 0
         
         try:
-            # Convert timeframe to numeric code
+            # Convert timeframe to string for SYMBOL storage
             from historicalfetcher.models.data_models import TimeFrameCode
-            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            tf_string = TimeFrameCode.to_string(timeframe)
             
             # Prepare basic insert data
             insert_data = []
             for candle in candles:
                 data_tuple = (
-                    int(tf_code),
+                    tf_string,
                     float(candle.open),
                     float(candle.high),
                     float(candle.low),
@@ -806,7 +814,7 @@ class OptimizedQuestDBClient:
         insert_data = []
         for candle in candles:
             insert_data.append((
-                int(tf_code),           # Numeric timeframe
+                tf_string,              # String timeframe
                 candle.open,
                 candle.high,
                 candle.low,
@@ -838,7 +846,7 @@ class OptimizedQuestDBClient:
             insert_data.append((
                 symbol_info.instrument_token,  # Contract-specific token
                 expiry_date,
-                int(tf_code),
+                tf_string,
                 candle.open,
                 candle.high,
                 candle.low,
@@ -876,7 +884,7 @@ class OptimizedQuestDBClient:
                 symbol_info.instrument_token,  # Contract-specific token
                 option_type_code,              # Numeric option type
                 strike_int,                    # Integer strike
-                int(tf_code),
+                tf_string,
                 candle.open,
                 candle.high,
                 candle.low,
@@ -910,7 +918,7 @@ class OptimizedQuestDBClient:
         insert_data = []
         for candle in candles:
             insert_data.append((
-                int(tf_code),
+                tf_string,
                 candle.open,
                 candle.high,
                 candle.low,
@@ -985,7 +993,7 @@ class OptimizedQuestDBClient:
         
         try:
             table_name = await self.table_manager.get_or_create_table(symbol_info)
-            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            tf_string = TimeFrameCode.to_string(timeframe)
             
             # Build query based on instrument type
             if symbol_info.instrument_type == InstrumentType.EQUITY:
@@ -1000,7 +1008,7 @@ class OptimizedQuestDBClient:
                 base_query = f"SELECT * FROM {table_name}"
             
             # Add WHERE conditions
-            conditions = [f"tf = {int(tf_code)}"]
+            conditions = [f"tf = '{tf_string}'"]
             
             if start_date:
                 conditions.append(f"timestamp >= '{start_date.isoformat()}'")
@@ -1035,7 +1043,7 @@ class OptimizedQuestDBClient:
         
         try:
             table_name = TableNamingStrategy.get_options_table_name(underlying, exchange, expiry)
-            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            tf_string = TimeFrameCode.to_string(timeframe)
             
             # Get latest data if no timestamp specified
             time_condition = ""
@@ -1050,7 +1058,7 @@ class OptimizedQuestDBClient:
                     open, high, low, close, volume, oi,
                     timestamp
                 FROM {table_name}
-                WHERE tf = {int(tf_code)} {time_condition}
+                WHERE tf = '{tf_string}' {time_condition}
                 ORDER BY strike, option_type, timestamp DESC
             """
             

@@ -29,8 +29,18 @@ NUMBA_CONFIG = {
     'nogil': True,              # Release Python GIL
     'cache': True,              # Cache compiled functions
     'fastmath': True,           # Enable fast math optimizations
-    'boundscheck': False,       # Disable bounds checking
-    'wraparound': False,        # Disable negative indexing
+    'boundscheck': False,       # Disable bounds checking for speed
+    'parallel': False           # Disable parallel by default (enable per function)
+}
+
+# Configuration for parallel processing (for large datasets)
+NUMBA_PARALLEL_CONFIG = {
+    'nopython': True,
+    'nogil': True,
+    'cache': True,
+    'fastmath': True,
+    'boundscheck': False,
+    'parallel': True            # Enable parallel processing
 }
 
 class NumbaIndicators:
@@ -123,11 +133,32 @@ class NumbaIndicators:
         Returns:
             Tuple of (macd_line, signal_line, histogram)
         """
-        ema_fast = NumbaIndicators.ema(prices, fast)
-        ema_slow = NumbaIndicators.ema(prices, slow)
+        # Calculate EMAs inline to avoid class method calls in Numba
+        # EMA Fast
+        alpha_fast = 2.0 / (fast + 1.0)
+        ema_fast = np.empty_like(prices)
+        ema_fast[0] = prices[0]
+        for i in range(1, len(prices)):
+            ema_fast[i] = alpha_fast * prices[i] + (1.0 - alpha_fast) * ema_fast[i-1]
         
+        # EMA Slow
+        alpha_slow = 2.0 / (slow + 1.0)
+        ema_slow = np.empty_like(prices)
+        ema_slow[0] = prices[0]
+        for i in range(1, len(prices)):
+            ema_slow[i] = alpha_slow * prices[i] + (1.0 - alpha_slow) * ema_slow[i-1]
+        
+        # MACD Line
         macd_line = ema_fast - ema_slow
-        signal_line = NumbaIndicators.ema(macd_line, signal)
+        
+        # Signal Line (EMA of MACD)
+        alpha_signal = 2.0 / (signal + 1.0)
+        signal_line = np.empty_like(macd_line)
+        signal_line[0] = macd_line[0]
+        for i in range(1, len(macd_line)):
+            signal_line[i] = alpha_signal * macd_line[i] + (1.0 - alpha_signal) * signal_line[i-1]
+        
+        # Histogram
         histogram = macd_line - signal_line
         
         return macd_line, signal_line, histogram
@@ -172,7 +203,12 @@ class NumbaIndicators:
         Returns:
             Tuple of (upper_band, middle_band, lower_band)
         """
-        middle_band = NumbaIndicators.sma(prices, period)
+        # Calculate SMA inline
+        middle_band = np.empty_like(prices)
+        middle_band[:period-1] = np.nan
+        
+        for i in range(period-1, len(prices)):
+            middle_band[i] = np.mean(prices[i-period+1:i+1])
         
         # Calculate standard deviation
         std_values = np.empty_like(prices)
@@ -196,7 +232,24 @@ class NumbaIndicators:
         Returns:
             Tuple of (supertrend_values, signals) where signals: 1=Buy, 0=Sell
         """
-        atr_values = NumbaIndicators.atr(high, low, close, period)
+        # Calculate ATR inline to avoid class method calls in Numba
+        tr = np.empty_like(close)
+        tr[0] = high[0] - low[0]
+        
+        for i in range(1, len(close)):
+            tr[i] = max(
+                high[i] - low[i],
+                abs(high[i] - close[i-1]),
+                abs(low[i] - close[i-1])
+            )
+        
+        # Calculate ATR using EMA
+        alpha = 2.0 / (period + 1.0)
+        atr_values = np.empty_like(tr)
+        atr_values[0] = tr[0]
+        
+        for i in range(1, len(tr)):
+            atr_values[i] = alpha * tr[i] + (1.0 - alpha) * atr_values[i-1]
         
         # Calculate basic bands
         hl2 = (high + low) / 2.0
@@ -265,8 +318,12 @@ class NumbaIndicators:
             else:
                 k_values[i] = ((close[i] - lowest_low) / (highest_high - lowest_low)) * 100.0
         
-        # Calculate %D (SMA of %K)
-        d_values = NumbaIndicators.sma(k_values, d_period)
+        # Calculate %D (SMA of %K) inline
+        d_values = np.empty_like(k_values)
+        d_values[:d_period-1] = np.nan
+        
+        for i in range(d_period-1, len(k_values)):
+            d_values[i] = np.mean(k_values[i-d_period+1:i+1])
         
         return k_values, d_values
     
@@ -370,10 +427,26 @@ class NumbaIndicators:
             else:
                 dm_minus[i] = 0.0
         
-        # Smooth the values
-        atr_smooth = NumbaIndicators.ema(tr, period)
-        dm_plus_smooth = NumbaIndicators.ema(dm_plus, period)
-        dm_minus_smooth = NumbaIndicators.ema(dm_minus, period)
+        # Smooth the values using inline EMA
+        alpha = 2.0 / (period + 1.0)
+        
+        # ATR smoothed
+        atr_smooth = np.empty_like(tr)
+        atr_smooth[0] = tr[0]
+        for i in range(1, len(tr)):
+            atr_smooth[i] = alpha * tr[i] + (1.0 - alpha) * atr_smooth[i-1]
+        
+        # DM+ smoothed
+        dm_plus_smooth = np.empty_like(dm_plus)
+        dm_plus_smooth[0] = dm_plus[0]
+        for i in range(1, len(dm_plus)):
+            dm_plus_smooth[i] = alpha * dm_plus[i] + (1.0 - alpha) * dm_plus_smooth[i-1]
+        
+        # DM- smoothed
+        dm_minus_smooth = np.empty_like(dm_minus)
+        dm_minus_smooth[0] = dm_minus[0]
+        for i in range(1, len(dm_minus)):
+            dm_minus_smooth[i] = alpha * dm_minus[i] + (1.0 - alpha) * dm_minus_smooth[i-1]
         
         # Calculate DI+ and DI-
         di_plus = 100.0 * dm_plus_smooth / atr_smooth
@@ -381,7 +454,12 @@ class NumbaIndicators:
         
         # Calculate ADX
         dx = np.abs(di_plus - di_minus) / (di_plus + di_minus) * 100.0
-        adx = NumbaIndicators.ema(dx, period)
+        
+        # ADX smoothed
+        adx = np.empty_like(dx)
+        adx[0] = dx[0]
+        for i in range(1, len(dx)):
+            adx[i] = alpha * dx[i] + (1.0 - alpha) * adx[i-1]
         
         return adx, di_plus, di_minus
     
@@ -408,7 +486,13 @@ class NumbaIndicators:
     def cci(high: np.ndarray, low: np.ndarray, close: np.ndarray, period: int = 20) -> np.ndarray:
         """Commodity Channel Index"""
         typical_price = (high + low + close) / 3.0
-        sma_tp = NumbaIndicators.sma(typical_price, period)
+        
+        # Calculate SMA of typical price inline
+        sma_tp = np.empty_like(typical_price)
+        sma_tp[:period-1] = np.nan
+        
+        for i in range(period-1, len(typical_price)):
+            sma_tp[i] = np.mean(typical_price[i-period+1:i+1])
         
         cci_values = np.empty_like(close)
         cci_values[:period-1] = np.nan

@@ -445,7 +445,38 @@ class OpenAlgoHistoricalDataFetcher:
     async def _get_date_range(self, symbol_info, timeframe: TimeFrame) -> tuple:
         """Get appropriate date range for fetching historical data"""
         
-        end_date = datetime.now()
+        # Fix: Use today's date, not current datetime to avoid future dates
+        today = datetime.now().date()
+        
+        # For intraday timeframes, end date should be previous trading day if after market hours
+        # For daily timeframes, end date can be today
+        if timeframe in [TimeFrame.MINUTE_1, TimeFrame.MINUTE_3, TimeFrame.MINUTE_5, 
+                        TimeFrame.MINUTE_15, TimeFrame.MINUTE_30, TimeFrame.HOUR_1]:
+            # For intraday data, use previous trading day if current time is after market close
+            current_time = datetime.now().time()
+            market_close = datetime.strptime("15:30", "%H:%M").time()
+            
+            if current_time > market_close or today.weekday() >= 5:  # Weekend check
+                # Use previous trading day (skip weekends)
+                days_back = 1
+                if today.weekday() == 6:  # Sunday
+                    days_back = 2
+                elif today.weekday() == 0 and current_time <= market_close:  # Monday before market close
+                    days_back = 0  # Use today
+                else:
+                    days_back = 1
+                
+                end_date = datetime.combine(today - timedelta(days=days_back), datetime.min.time())
+            else:
+                # Use today
+                end_date = datetime.combine(today, datetime.min.time())
+        else:
+            # For daily data, use today (but skip weekends)
+            if today.weekday() >= 5:  # Weekend
+                days_back = today.weekday() - 4  # Go back to Friday
+                end_date = datetime.combine(today - timedelta(days=days_back), datetime.min.time())
+            else:
+                end_date = datetime.combine(today, datetime.min.time())
         
         # Check if we have existing data and should do incremental fetch
         last_fetch_date = await self.questdb_client.get_last_fetch_date(symbol_info, timeframe.value)
@@ -464,6 +495,13 @@ class OpenAlgoHistoricalDataFetcher:
                     start_date = end_date - timedelta(days=self.settings.historical_days_limit)
             else:
                 start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+        
+        # Ensure start_date is not in the future
+        if start_date > end_date:
+            start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+        
+        # Log the date range for debugging
+        logger.info(f"📅 Date range for {symbol_info.symbol} ({timeframe.value}): {start_date.date()} to {end_date.date()}")
         
         return start_date, end_date
     

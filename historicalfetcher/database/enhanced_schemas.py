@@ -74,7 +74,7 @@ class EnhancedTableSchemas:
         return f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             -- Basic OHLCV
-            tf BYTE,                    -- Timeframe code
+            tf SYMBOL CAPACITY 10 CACHE, -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             open DOUBLE,
             high DOUBLE,
             low DOUBLE,
@@ -173,7 +173,7 @@ class EnhancedTableSchemas:
             -- Contract Information
             contract_token SYMBOL CAPACITY 1000 CACHE,
             expiry_date DATE,
-            tf BYTE,
+            tf SYMBOL CAPACITY 10 CACHE, -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             
             -- Basic OHLCV + OI
             open DOUBLE,
@@ -235,7 +235,7 @@ class EnhancedTableSchemas:
             contract_token SYMBOL CAPACITY 2000 CACHE,
             option_type BYTE,           -- 1=CE, 2=PE
             strike INT,                 -- Strike * 100
-            tf BYTE,
+            tf SYMBOL CAPACITY 10 CACHE, -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             
             -- Basic OHLCV + OI
             open DOUBLE,
@@ -321,7 +321,7 @@ class EnhancedTableSchemas:
         """Enhanced index schema with comprehensive indicators"""
         return f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
-            tf BYTE,
+            tf SYMBOL CAPACITY 10 CACHE, -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             
             -- Basic OHLC (no volume for indices)
             open DOUBLE,
@@ -376,7 +376,7 @@ class EnhancedTableSchemas:
         """Specialized options analytics table for chain-level metrics"""
         return f"""
         CREATE TABLE IF NOT EXISTS {table_name}_analytics (
-            tf BYTE,
+            tf SYMBOL CAPACITY 10 CACHE, -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             
             -- Chain-Level Metrics
             total_call_volume LONG,
@@ -550,7 +550,7 @@ NUMBA_SETTINGS = {
     'fastmath': True,           # Enable fast math optimizations
     'parallel': True,           # Enable parallel execution where possible
     'boundscheck': False,       # Disable bounds checking for speed
-    'wraparound': False,        # Disable negative indexing
+    # Note: 'wraparound' is not a valid Numba option, removed
     'cdivision': True,          # Enable C-style division
 }
 

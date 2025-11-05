@@ -97,7 +97,16 @@ class OpenAlgoAPIService:
                     'data': data_records
                 }, 200
             else:
-                logger.warning(f"⚠️ OPENALGO API - No records returned for {symbol} ({exchange}, {interval})")
+                # Enhanced logging for empty responses
+                if isinstance(response, pd.DataFrame):
+                    logger.warning(f"⚠️ OPENALGO API - Empty DataFrame returned for {symbol} ({exchange}, {interval})")
+                else:
+                    logger.warning(f"⚠️ OPENALGO API - No records returned for {symbol} ({exchange}, {interval})")
+                
+                # Log potential reasons for empty data
+                if interval in ['1m', '3m', '5m', '15m', '30m', '1h']:
+                    logger.info(f"💡 Intraday data might be unavailable due to: market hours, weekends, or data source limitations")
+                
                 return True, {
                     'status': 'success',
                     'data': []

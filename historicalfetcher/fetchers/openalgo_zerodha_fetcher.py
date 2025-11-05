@@ -294,7 +294,13 @@ class OpenAlgoZerodhaHistoricalFetcher:
                 
                 # Convert DataFrame to HistoricalCandle objects (optimized) 
                 if df.empty:
-                    logger.warning(f"❌ EMPTY DATAFRAME for {symbol} ({timeframe.value}) from {from_str} to {to_str}")
+                    # Enhanced error handling for empty dataframes
+                    if timeframe in [TimeFrame.MINUTE_1, TimeFrame.MINUTE_3, TimeFrame.MINUTE_5, 
+                                   TimeFrame.MINUTE_15, TimeFrame.MINUTE_30, TimeFrame.HOUR_1]:
+                        logger.warning(f"⚠️ No intraday data available for {symbol} ({timeframe.value}) from {from_str} to {to_str}")
+                        logger.info(f"💡 This could be due to: market hours, weekends, or data availability")
+                    else:
+                        logger.warning(f"⚠️ No daily data available for {symbol} ({timeframe.value}) from {from_str} to {to_str}")
                     candles = []
                 else:
                     logger.info(f"🔄 Converting DataFrame with {len(df)} rows to candles for {symbol}")

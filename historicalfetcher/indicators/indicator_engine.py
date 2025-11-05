@@ -104,7 +104,7 @@ class IndicatorEngine:
             
             # Create results
             results = []
-            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            tf_string = TimeFrameCode.to_string(timeframe)
             
             for i, candle in enumerate(candles):
                 # Extract indicators for this timestamp
@@ -121,7 +121,7 @@ class IndicatorEngine:
                 
                 result = IndicatorResult(
                     symbol=symbol_info.symbol,
-                    timeframe=int(tf_code),
+                    timeframe=tf_string,
                     timestamp=candle.timestamp,
                     open=candle.open,
                     high=candle.high,
@@ -183,7 +183,7 @@ class IndicatorEngine:
             
             # Create results
             results = []
-            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            tf_string = TimeFrameCode.to_string(timeframe)
             
             for i, candle in enumerate(candles):
                 # Extract indicators for this timestamp
@@ -206,7 +206,7 @@ class IndicatorEngine:
                 
                 result = IndicatorResult(
                     symbol=symbol_info.symbol,
-                    timeframe=int(tf_code),
+                    timeframe=tf_string,
                     timestamp=candle.timestamp,
                     open=candle.open,
                     high=candle.high,
@@ -268,7 +268,7 @@ class IndicatorEngine:
             
             # Create results
             results = []
-            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            tf_string = TimeFrameCode.to_string(timeframe)
             
             for i, candle in enumerate(candles):
                 # Extract indicators for this timestamp
@@ -285,7 +285,7 @@ class IndicatorEngine:
                 
                 result = IndicatorResult(
                     symbol=symbol_info.symbol,
-                    timeframe=int(tf_code),
+                    timeframe=tf_string,
                     timestamp=candle.timestamp,
                     open=candle.open,
                     high=candle.high,

@@ -45,6 +45,63 @@ class TimeFrameCode(IntEnum):
     MINUTE_30 = 30
     HOUR_1 = 60
     DAILY = 1440
+    
+    @classmethod
+    def from_timeframe(cls, timeframe):
+        """Convert TimeFrame enum to TimeFrameCode (for backward compatibility)"""
+        # Import here to avoid circular imports
+        from historicalfetcher.config.openalgo_settings import TimeFrame
+        
+        mapping = {
+            TimeFrame.MINUTE_1: cls.MINUTE_1,
+            TimeFrame.MINUTE_3: cls.MINUTE_3,
+            TimeFrame.MINUTE_5: cls.MINUTE_5,
+            TimeFrame.MINUTE_15: cls.MINUTE_15,
+            TimeFrame.MINUTE_30: cls.MINUTE_30,
+            TimeFrame.HOUR_1: cls.HOUR_1,
+            TimeFrame.DAILY: cls.DAILY,
+        }
+        
+        # Handle string values as well
+        if isinstance(timeframe, str):
+            string_mapping = {
+                '1m': cls.MINUTE_1,
+                '3m': cls.MINUTE_3,
+                '5m': cls.MINUTE_5,
+                '15m': cls.MINUTE_15,
+                '30m': cls.MINUTE_30,
+                '1h': cls.HOUR_1,
+                'D': cls.DAILY,
+            }
+            return string_mapping.get(timeframe, cls.MINUTE_1)
+        
+        return mapping.get(timeframe, cls.MINUTE_1)
+    
+    @classmethod
+    def to_string(cls, timeframe):
+        """Convert TimeFrame enum to string for QuestDB SYMBOL storage"""
+        # Import here to avoid circular imports
+        from historicalfetcher.config.openalgo_settings import TimeFrame
+        
+        # Handle TimeFrame enum
+        if hasattr(timeframe, 'value'):
+            return timeframe.value
+        
+        # Handle string values (pass through)
+        if isinstance(timeframe, str):
+            return timeframe
+            
+        # Handle numeric codes (convert to string)
+        numeric_mapping = {
+            cls.MINUTE_1: '1m',
+            cls.MINUTE_3: '3m',
+            cls.MINUTE_5: '5m',
+            cls.MINUTE_15: '15m',
+            cls.MINUTE_30: '30m',
+            cls.HOUR_1: '1h',
+            cls.DAILY: 'D',
+        }
+        return numeric_mapping.get(timeframe, '1m')
 
 
 class OptionTypeCode(IntEnum):
@@ -57,7 +114,7 @@ class OptionTypeCode(IntEnum):
 class IndicatorResult:
     """Container for calculated indicators"""
     symbol: str
-    timeframe: int
+    timeframe: str  # Changed to string for SYMBOL storage ('1m', '5m', 'D', etc.)
     timestamp: datetime
     
     # Basic OHLCV
@@ -84,7 +141,16 @@ class IndicatorResult:
 class CalculationConfig:
     """Configuration for indicator calculations"""
     
-    # Technical Indicators
+    # Grouped Technical Indicators (matching indicator engine expectations)
+    calculate_trend_indicators: bool = True      # EMA, SMA
+    calculate_momentum_indicators: bool = True   # RSI, MACD, Stochastic
+    calculate_volatility_indicators: bool = True # ATR, Bollinger Bands
+    calculate_volume_indicators: bool = True     # VWAP, OBV
+    calculate_greeks: bool = False              # Options Greeks
+    calculate_iv: bool = False                  # Implied Volatility
+    calculate_advanced_greeks: bool = False     # Advanced Greeks
+    
+    # Individual Technical Indicators (for backward compatibility)
     enable_sma: bool = True
     enable_ema: bool = True
     enable_rsi: bool = True

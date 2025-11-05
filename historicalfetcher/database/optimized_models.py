@@ -222,7 +222,7 @@ class OptionsChainSnapshot:
 OPTIMIZED_TABLE_SCHEMAS = {
     'equity': """
         CREATE TABLE IF NOT EXISTS {table_name} (
-            tf BYTE,                    -- Timeframe code (1,3,5,15,30,60,1440)
+            tf SYMBOL CAPACITY 10 CACHE,    -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             open DOUBLE,
             high DOUBLE,
             low DOUBLE,
@@ -231,15 +231,15 @@ OPTIMIZED_TABLE_SCHEMAS = {
             timestamp TIMESTAMP
         ) TIMESTAMP(timestamp) PARTITION BY DAY;
         
-        -- Create indexes for fast queries
-        -- QuestDB automatically creates indexes on SYMBOL columns and timestamp
+        -- QuestDB automatically creates optimized indexes for SYMBOL columns and timestamp
+        -- Additional composite index for timeframe + timestamp queries
     """,
     
     'futures': """
         CREATE TABLE IF NOT EXISTS {table_name} (
             contract_token SYMBOL CAPACITY 1000 CACHE,
             expiry_date DATE,
-            tf BYTE,
+            tf SYMBOL CAPACITY 10 CACHE,    -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             open DOUBLE,
             high DOUBLE,
             low DOUBLE,
@@ -255,7 +255,7 @@ OPTIMIZED_TABLE_SCHEMAS = {
             contract_token SYMBOL CAPACITY 2000 CACHE,
             option_type BYTE,           -- 1=CE, 2=PE
             strike INT,                 -- Strike * 100
-            tf BYTE,
+            tf SYMBOL CAPACITY 10 CACHE,    -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             open DOUBLE,
             high DOUBLE,
             low DOUBLE,
@@ -273,7 +273,7 @@ OPTIMIZED_TABLE_SCHEMAS = {
     
     'index': """
         CREATE TABLE IF NOT EXISTS {table_name} (
-            tf BYTE,
+            tf SYMBOL CAPACITY 10 CACHE,    -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
             open DOUBLE,
             high DOUBLE,
             low DOUBLE,

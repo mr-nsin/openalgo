@@ -113,7 +113,7 @@ class OptimizedTableSchemas:
         """Optimized schema for equity tables"""
         return f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
-            tf BYTE,                    -- Timeframe code (1,3,5,15,30,60,1440)
+            tf SHORT,                   -- Timeframe code (1,3,5,15,30,60,1440)
             open DOUBLE,
             high DOUBLE,
             low DOUBLE,
@@ -130,7 +130,7 @@ class OptimizedTableSchemas:
         CREATE TABLE IF NOT EXISTS {table_name} (
             contract_token SYMBOL CAPACITY 1000 CACHE,  -- Specific contract token
             expiry_date DATE,
-            tf BYTE,                    -- Timeframe code
+            tf SHORT,                   -- Timeframe code
             open DOUBLE,
             high DOUBLE,
             low DOUBLE,
