@@ -160,13 +160,51 @@ class OpenAlgoHistoricalDataFetcher:
                     channels=['telegram']
                 )
             
-            # Process each instrument type
-            for instrument_type, symbols in symbols_by_type.items():
-                if not symbols:
-                    continue
+            # Process each instrument type in priority order
+            # Priority: INDEX (especially NIFTY, BANKNIFTY, SENSEX) first, then EQ, FUT, options
+            priority_order = ['INDEX', 'EQ', 'FUT', 'CE', 'PE']
+            
+            # Process INDEX symbols first (already sorted by symbol manager with priority indices first)
+            if 'INDEX' in symbols_by_type and symbols_by_type['INDEX']:
+                index_symbols = symbols_by_type['INDEX']
                 
-                logger.info(f"🔄 Processing {instrument_type} symbols ({len(symbols):,} symbols)")
-                await self._process_instrument_type(instrument_type, symbols)
+                # Log major indices that will be processed first
+                major_indices = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'NIFTY50', 'NIFTY 50', 'NIFTY BANK', 'NIFTY IT']
+                major_found = [s for s in index_symbols[:10] if any(major in s.symbol.upper() for major in major_indices)]
+                if major_found:
+                    logger.info(f"📊 Major indices to be processed first: {', '.join([s.symbol for s in major_found])}")
+                
+                # Separate NSE_INDEX and other INDEX symbols
+                nse_index_symbols = [s for s in index_symbols if s.exchange == 'NSE_INDEX']
+                other_index_symbols = [s for s in index_symbols if s.exchange != 'NSE_INDEX']
+                
+                # Process NSE_INDEX first (includes NIFTY, BANKNIFTY, etc.)
+                if nse_index_symbols:
+                    logger.info(f"🔄 Processing NSE_INDEX symbols first ({len(nse_index_symbols):,} symbols)")
+                    logger.info(f"   First 5: {', '.join([s.symbol for s in nse_index_symbols[:5]])}")
+                    await self._process_instrument_type('INDEX', nse_index_symbols)
+                
+                # Then process other INDEX symbols (BSE_INDEX, etc.)
+                if other_index_symbols:
+                    logger.info(f"🔄 Processing other INDEX symbols ({len(other_index_symbols):,} symbols)")
+                    await self._process_instrument_type('INDEX', other_index_symbols)
+            
+            # Process remaining instrument types in priority order
+            for instrument_type in priority_order:
+                if instrument_type == 'INDEX':  # Already processed above
+                    continue
+                    
+                if instrument_type in symbols_by_type and symbols_by_type[instrument_type]:
+                    symbols = symbols_by_type[instrument_type]
+                    logger.info(f"🔄 Processing {instrument_type} symbols ({len(symbols):,} symbols)")
+                    await self._process_instrument_type(instrument_type, symbols)
+            
+            # Process any remaining instrument types not in priority list
+            for instrument_type, symbols in symbols_by_type.items():
+                if instrument_type not in priority_order and instrument_type != 'INDEX':
+                    if symbols:
+                        logger.info(f"🔄 Processing {instrument_type} symbols ({len(symbols):,} symbols)")
+                        await self._process_instrument_type(instrument_type, symbols)
             
             # Finalize processing
             await self._finalize_processing()

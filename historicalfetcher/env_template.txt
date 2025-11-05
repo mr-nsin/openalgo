@@ -44,7 +44,9 @@ HIST_FETCHER_ENABLED_TIMEFRAMES=1m,5m,15m,1h,D
 HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=EQ,FUT,CE,PE,INDEX
 
 # Exchanges to include (comma-separated)
-HIST_FETCHER_ENABLED_EXCHANGES=NSE,BSE,NFO,BFO,NSE_INDEX,BSE_INDEX
+# IMPORTANT: NSE_INDEX and BSE_INDEX must be included for index symbols (NIFTY, BANKNIFTY, SENSEX, etc.)
+# Order: INDEX exchanges first to ensure they are processed first
+HIST_FETCHER_ENABLED_EXCHANGES=NSE_INDEX,BSE_INDEX,NSE,BSE,NFO,BFO
 
 # Historical data range (days from today)
 HIST_FETCHER_HISTORICAL_DAYS_LIMIT=365
@@ -57,14 +59,36 @@ HIST_FETCHER_START_DATE_OVERRIDE=
 # PERFORMANCE CONFIGURATION
 # ============================================================================
 # Configure processing performance and rate limiting
+#
+# IMPORTANT: Rate limiting is critical to avoid API throttling and "too many requests" errors
+# Zerodha API official limit: 3 requests/second
+# Recommended settings: 2 requests/second with 2 concurrent for safety margin
+#
+# Calculation example:
+# - 100 symbols × 5 timeframes = 500 requests
+# - At 2 req/sec: 500/2 = 250 seconds (~4 minutes)
+# - At 0.2 req/sec: 500/0.2 = 2500 seconds (~42 minutes) ❌ TOO SLOW
+# - At 3 req/sec: Risk of hitting rate limits ❌ TOO AGGRESSIVE
 
-# API requests per second (respect broker limits)
-HIST_FETCHER_API_REQUESTS_PER_SECOND=3
+# API requests per second (MUST be below Zerodha's 3 req/sec limit)
+# Recommended: 2.0 (safe margin below 3.0 limit)
+# Minimum: 0.5 (very slow, but safe)
+# Maximum: 2.5 (risky, close to limit)
+HIST_FETCHER_API_REQUESTS_PER_SECOND=2.0
 
-# Maximum concurrent requests
-HIST_FETCHER_MAX_CONCURRENT_REQUESTS=5
+# Maximum concurrent requests (parallel API calls)
+# Recommended: 2 (allows some parallelization without overwhelming)
+# Minimum: 1 (very safe, but slower)
+# Maximum: 3 (risky with high request rate)
+# Note: Higher concurrency × higher rate = more total requests
+#       Example: 2 concurrent × 2 req/sec = 4 req/sec effective (exceeds limit!)
+#       So keep: (concurrent × rate) < 3.0
+HIST_FETCHER_MAX_CONCURRENT_REQUESTS=2
 
-# Batch size for processing symbols
+# Batch size for processing symbols (how many symbols to process in parallel)
+# Recommended: 50 (good balance between throughput and memory)
+# Lower values (10-20): More control, less memory usage
+# Higher values (100+): Faster but more memory intensive
 HIST_FETCHER_BATCH_SIZE=50
 
 # Memory limit in MB

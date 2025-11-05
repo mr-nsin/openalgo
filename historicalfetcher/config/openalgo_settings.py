@@ -60,11 +60,15 @@ class OpenAlgoSettings(BaseSettings):
     questdb_password: Optional[str] = Field(default_factory=lambda: os.getenv('HIST_FETCHER_QUESTDB_PASSWORD'))
     questdb_database: str = Field(default_factory=lambda: os.getenv('HIST_FETCHER_QUESTDB_DATABASE', 'qdb'))
     
-    # Processing Configuration - CONSERVATIVE FOR RATE LIMITING
-    # Reduced to 0.2 requests/second to prevent "too many requests" errors
-    api_requests_per_second: int = Field(default_factory=lambda: max(1, int(float(os.getenv('HIST_FETCHER_API_REQUESTS_PER_SECOND', '0.2')))))
-    # Reduced to 1 concurrent request to prevent overwhelming broker APIs
-    max_concurrent_requests: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_MAX_CONCURRENT_REQUESTS', '1')))
+    # Processing Configuration - OPTIMIZED FOR ZERODHA API LIMITS
+    # Zerodha API limit: 3 requests/second (official)
+    # Recommended: 2.0 requests/second for safety margin below limit
+    # Note: Using float for more precise rate limiting (e.g., 2.0 req/sec)
+    api_requests_per_second: float = Field(default_factory=lambda: float(os.getenv('HIST_FETCHER_API_REQUESTS_PER_SECOND', '2.0')))
+    # Recommended: 2 concurrent requests (allows parallelization without overwhelming)
+    # Formula: (max_concurrent × api_requests_per_second) should be < 3.0
+    # Example: 2 × 2.0 = 4.0 effective (but rate limiter prevents this)
+    max_concurrent_requests: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_MAX_CONCURRENT_REQUESTS', '2')))
     # Increased to 50 symbols for better throughput (batch_size is for processing, not total symbols)
     batch_size: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_BATCH_SIZE', '50')))
     # Additional settings from .env
@@ -82,13 +86,15 @@ class OpenAlgoSettings(BaseSettings):
         default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_INSTRUMENT_TYPES', 'EQ,FUT,CE,PE,INDEX').split(',')
     )
     
-    # Expanded exchanges - include all major exchanges
+    # Expanded exchanges - include all major exchanges (INDEX exchanges are critical!)
+    # Must include NSE_INDEX and BSE_INDEX for index symbol fetching
     enabled_exchanges: List[str] = Field(
-        default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_EXCHANGES', 'NSE,BSE,NFO,BFO').split(',')
+        default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_EXCHANGES', 'NSE_INDEX,BSE_INDEX,NSE,BSE,NFO,BFO').split(',')
     )
     
-    # Historical Data Configuration - Reduced from 365 to 30 days for initial testing
-    historical_days_limit: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_HISTORICAL_DAYS_LIMIT', '30')))
+    # Historical Data Configuration - Default to 365 days (1 year)
+    # Can be overridden via HIST_FETCHER_HISTORICAL_DAYS_LIMIT in .env
+    historical_days_limit: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_HISTORICAL_DAYS_LIMIT', '365')))
     start_date_override: Optional[str] = Field(default_factory=lambda: os.getenv('HIST_FETCHER_START_DATE_OVERRIDE'))
     
     # Notification Configuration (reuse OpenAlgo's notification system)

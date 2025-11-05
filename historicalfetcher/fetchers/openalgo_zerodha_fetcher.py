@@ -60,7 +60,8 @@ class OpenAlgoZerodhaHistoricalFetcher:
         self._async_logger = None
         
         # Rate limiting - optimized with better semaphore management
-        self._request_semaphore = asyncio.Semaphore(settings.api_requests_per_second)
+        # Semaphore uses max_concurrent, rate limiting uses api_requests_per_second
+        self._request_semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
         self._last_request_time = 0.0
         self._min_request_interval = 1.0 / settings.api_requests_per_second
         
@@ -453,8 +454,9 @@ class OpenAlgoZerodhaHistoricalFetcher:
                 logger.debug(f"⏱️ Rate limiting: sleeping for {sleep_time:.2f}s")
                 await asyncio.sleep(sleep_time)
         
-        # Add extra buffer for broker API stability (increased for rate limiting)
-        await asyncio.sleep(2.0)  # 2 second extra buffer to prevent rate limiting
+        # Add minimal buffer for broker API stability (reduced from 2.0s to 0.5s)
+        # The rate limiter already enforces proper spacing, this is just a safety margin
+        await asyncio.sleep(0.5)  # 0.5 second buffer to prevent rate limiting
         self._last_request_time = asyncio.get_event_loop().time()
     
     async def fetch_multiple_symbols(
@@ -634,15 +636,50 @@ class OpenAlgoSymbolManager:
                     
                     # Categorize by instrument type
                     instrument_type = symbol.instrumenttype
-                    if instrument_type in symbols_by_type:
+                    exchange = symbol.exchange
+                    
+                    # CRITICAL: Check exchange first to identify INDEX symbols
+                    # INDEX symbols have exchange='NSE_INDEX' or 'BSE_INDEX' (even if instrumenttype='EQ')
+                    if exchange in ['NSE_INDEX', 'BSE_INDEX']:
+                        # All symbols from INDEX exchanges go to INDEX category
+                        symbols_by_type['INDEX'].append(symbol_info)
+                    elif instrument_type == 'INDEX':
+                        # Also handle case where instrumenttype is explicitly INDEX
+                        symbols_by_type['INDEX'].append(symbol_info)
+                    elif instrument_type in symbols_by_type:
                         symbols_by_type[instrument_type].append(symbol_info)
                     elif instrument_type in ['CE', 'PE']:
                         # Options
                         symbols_by_type[instrument_type].append(symbol_info)
+                    else:
+                        # Unknown instrument type, log for debugging
+                        logger.debug(f"Unknown instrument type: {instrument_type} for symbol {symbol.symbol} (exchange: {exchange})")
                 
                 # Yield control periodically
                 if i % (batch_size * 5) == 0:
                     await asyncio.sleep(0)
+            
+            # Prioritize INDEX symbols: NIFTY, BANKNIFTY, SENSEX, NIFTY50 first
+            if 'INDEX' in symbols_by_type and symbols_by_type['INDEX']:
+                index_symbols = symbols_by_type['INDEX']
+                # Priority order: Major indices first
+                priority_indices = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'NIFTY50', 'NIFTY 50', 'NIFTY BANK', 'NIFTY IT']
+                
+                def get_index_priority(symbol_info):
+                    symbol_upper = symbol_info.symbol.upper()
+                    for idx, priority_symbol in enumerate(priority_indices):
+                        if priority_symbol in symbol_upper or symbol_upper == priority_symbol:
+                            return idx
+                    return len(priority_indices)  # Lower priority for others
+                
+                # Sort: Priority indices first, then by exchange (NSE_INDEX before BSE_INDEX), then alphabetically
+                index_symbols.sort(key=lambda s: (
+                    get_index_priority(s),
+                    0 if s.exchange == 'NSE_INDEX' else 1,  # NSE_INDEX first
+                    s.symbol.upper()
+                ))
+                
+                logger.info(f"📊 INDEX symbols sorted: {len([s for s in index_symbols if get_index_priority(s) < len(priority_indices)])} priority indices first")
             
             # Update cache
             self._symbol_cache = symbols_by_type
@@ -651,7 +688,14 @@ class OpenAlgoSymbolManager:
             # Log breakdown
             for inst_type, symbol_list in symbols_by_type.items():
                 if symbol_list:
-                    logger.info(f"  {inst_type}: {len(symbol_list)} symbols")
+                    # For INDEX, show breakdown by exchange
+                    if inst_type == 'INDEX':
+                        nse_count = len([s for s in symbol_list if s.exchange == 'NSE_INDEX'])
+                        bse_count = len([s for s in symbol_list if s.exchange == 'BSE_INDEX'])
+                        other_count = len(symbol_list) - nse_count - bse_count
+                        logger.info(f"  {inst_type}: {len(symbol_list)} symbols (NSE_INDEX: {nse_count}, BSE_INDEX: {bse_count}, Other: {other_count})")
+                    else:
+                        logger.info(f"  {inst_type}: {len(symbol_list)} symbols")
             
             return symbols_by_type
                 
