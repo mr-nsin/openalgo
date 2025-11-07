@@ -303,14 +303,15 @@ class FetchMetricsTracker:
         # Failed Symbols (first 50)
         if self.metrics.failed_symbols_list:
             report.append("🚫 FAILED SYMBOLS (First 50)")
-            report.append("-" * 80)
-            report.append(f"{'Symbol':<15} {'Exchange':<8} {'Type':<6} {'Timeframe':<10} {'Reason':<15} {'Error'}")
-            report.append("-" * 80)
+            report.append("-" * 120)
+            report.append(f"{'Symbol':<15} {'Exchange':<10} {'Type':<6} {'Timeframe':<10} {'Date Range':<25} {'Reason':<15} {'Error'}")
+            report.append("-" * 120)
             
             for failed in self.metrics.failed_symbols_list[:50]:
                 error_short = failed.error_message[:30] + "..." if len(failed.error_message) > 30 else failed.error_message
-                report.append(f"{failed.symbol:<15} {failed.exchange:<8} {failed.instrument_type:<6} "
-                           f"{failed.timeframe:<10} {failed.failure_reason.value:<15} {error_short}")
+                date_range_short = failed.date_range[:23] + "..." if len(failed.date_range) > 23 else failed.date_range
+                report.append(f"{failed.symbol:<15} {failed.exchange:<10} {failed.instrument_type:<6} "
+                           f"{failed.timeframe:<10} {date_range_short:<25} {failed.failure_reason.value:<15} {error_short}")
             
             if len(self.metrics.failed_symbols_list) > 50:
                 report.append(f"... and {len(self.metrics.failed_symbols_list) - 50} more failed symbols")

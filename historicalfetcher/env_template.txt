@@ -37,7 +37,7 @@ HIST_FETCHER_QUESTDB_DATABASE=qdb
 
 # Timeframes to fetch (comma-separated)
 # Supported: 1m, 3m, 5m, 15m, 30m, 1h, D
-HIST_FETCHER_ENABLED_TIMEFRAMES=1m,5m,15m,1h,D
+HIST_FETCHER_ENABLED_TIMEFRAMES=1m,3m,5m,15m,30m,1h,D
 
 # Instrument types to fetch (comma-separated)
 # Supported: EQ, FUT, CE, PE, INDEX

@@ -25,6 +25,7 @@ if _project_root not in sys.path:
     sys.path.append(_project_root)
 
 from historicalfetcher.utils.async_logger import setup_async_logger, get_async_logger
+from historicalfetcher.utils.fetch_metrics import FetchMetricsTracker, FailureReason
 
 # Initialize async logger early for module-level logging
 # Default logger will be reconfigured in __init__ with settings
@@ -106,6 +107,12 @@ class OpenAlgoHistoricalDataFetcher:
             enable_auto_collection=self.settings.enable_performance_monitoring
         )
         
+        # Initialize metrics tracker for detailed reporting
+        self.metrics_tracker = FetchMetricsTracker(
+            email_notifier=self.notification_manager.email_notifier if hasattr(self.notification_manager, 'email_notifier') else None,
+            telegram_notifier=self.notification_manager.telegram_notifier if hasattr(self.notification_manager, 'telegram_notifier') else None
+        )
+        
         # Processing statistics
         self.stats = {
             'start_time': None,
@@ -146,6 +153,9 @@ class OpenAlgoHistoricalDataFetcher:
             total_symbols = sum(len(symbols) for symbols in symbols_by_type.values())
             self.stats['total_symbols'] = total_symbols
             self.stats['start_time'] = datetime.now()
+            
+            # Initialize metrics tracker
+            self.metrics_tracker.start_tracking(total_symbols)
             
             self.performance_monitor.start_processing(total_symbols)
             
@@ -385,16 +395,34 @@ class OpenAlgoHistoricalDataFetcher:
         ordered_timeframes = self._get_processing_order(timeframes)
         
         for timeframe in ordered_timeframes:
+            from_date = None
+            to_date = None
+            date_range_str = "N/A"
+            
             try:
                 async with AsyncTimer(self.performance_monitor, f'fetch_{timeframe.value}'):
                     # Determine date range
                     from_date, to_date = await self._get_date_range(symbol_info, timeframe)
                     
                     if not from_date or not to_date:
+                        # Track as failure - no date range
+                        date_range_str = "Invalid date range"
+                        self.metrics_tracker.record_symbol_failure(
+                            symbol_info=symbol_info,
+                            timeframe=timeframe,
+                            date_range=date_range_str,
+                            failure_reason=FailureReason.CONVERSION_ERROR,
+                            error_message="Invalid or missing date range"
+                        )
                         continue
                     
+                    date_range_str = f"{from_date.date()} to {to_date.date()}"
+                    
                     # Log before fetching: Symbol, Timeframe, Date Range
-                    logger.info(f"📥 Fetching {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {from_date.date()} to {to_date.date()}")
+                    logger.info(f"📥 Fetching {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str}")
+                    
+                    # Increment total timeframes counter
+                    self.metrics_tracker.increment_total_timeframes()
                     
                     # Fetch historical data
                     candles = await self.zerodha_fetcher.fetch_historical_data(
@@ -433,6 +461,14 @@ class OpenAlgoHistoricalDataFetcher:
                         
                         total_records += records_inserted
                         
+                        # Track success in metrics
+                        self.metrics_tracker.record_symbol_success(
+                            symbol_info=symbol_info,
+                            timeframe=timeframe,
+                            candles_count=len(candles),
+                            records_inserted=records_inserted
+                        )
+                        
                         # Update timeframe stats
                         if timeframe.value not in self.stats['timeframe_stats']:
                             self.stats['timeframe_stats'][timeframe.value] = 0
@@ -447,9 +483,18 @@ class OpenAlgoHistoricalDataFetcher:
                         )
                         
                         # Log after saving: Success with records inserted, symbol, timeframe, date range
-                        logger.info(f"✅ Saved {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {from_date.date()} to {to_date.date()} | Records: {records_inserted:,}")
+                        logger.info(f"✅ Saved {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str} | Records: {records_inserted:,}")
                     else:
-                        logger.warning(f"⚠️ No data found for {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {from_date.date()} to {to_date.date()}")
+                        # Track as failure - no data
+                        logger.warning(f"⚠️ No data found for {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str}")
+                        
+                        self.metrics_tracker.record_symbol_failure(
+                            symbol_info=symbol_info,
+                            timeframe=timeframe,
+                            date_range=date_range_str,
+                            failure_reason=FailureReason.NO_DATA,
+                            error_message="No data returned from API"
+                        )
                         
                         await self.questdb_client.update_fetch_status(
                             symbol_info,
@@ -459,7 +504,31 @@ class OpenAlgoHistoricalDataFetcher:
                         )
             
             except Exception as e:
+                error_msg = str(e)
                 logger.exception(f"❌ Error fetching {symbol_info.symbol} ({timeframe.value}): {e}")
+                
+                # Determine failure reason based on error type
+                if "rate limit" in error_msg.lower():
+                    failure_reason = FailureReason.RATE_LIMIT
+                elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    failure_reason = FailureReason.NETWORK_ERROR
+                elif "connection" in error_msg.lower() or "network" in error_msg.lower():
+                    failure_reason = FailureReason.NETWORK_ERROR
+                elif "database" in error_msg.lower() or "questdb" in error_msg.lower() or "Invalid column" in error_msg:
+                    failure_reason = FailureReason.DATABASE_ERROR
+                elif "api" in error_msg.lower():
+                    failure_reason = FailureReason.API_ERROR
+                else:
+                    failure_reason = FailureReason.UNKNOWN_ERROR
+                
+                # Track failure with timeframe and date range
+                self.metrics_tracker.record_symbol_failure(
+                    symbol_info=symbol_info,
+                    timeframe=timeframe,
+                    date_range=date_range_str,
+                    failure_reason=failure_reason,
+                    error_message=error_msg[:500]  # Limit error message length
+                )
                 
                 await self.questdb_client.update_fetch_status(
                     symbol_info,
@@ -662,11 +731,17 @@ class OpenAlgoHistoricalDataFetcher:
         )
         self.stats['daily_data_records'] = self.stats['timeframe_stats'].get('D', 0)
         
+        # Finish metrics tracking
+        self.metrics_tracker.finish_tracking()
+        
         # Insert fetch summary into database
         await self._insert_fetch_summary()
         
         # Log final statistics
         await self._log_final_statistics()
+        
+        # Generate and log detailed report with failed symbols
+        await self._log_detailed_completion_report()
     
     async def _insert_fetch_summary(self):
         """Insert daily fetch summary into database"""
@@ -715,6 +790,54 @@ class OpenAlgoHistoricalDataFetcher:
             logger.info(f"  • Max Memory: {perf_summary.get('max_memory_mb', 0):.1f} MB")
             logger.info(f"  • Avg CPU: {perf_summary.get('avg_cpu_percent', 0):.1f}%")
             logger.info(f"  • Processing Rate: {perf_summary.get('processing_stats', {}).get('items_per_second', 0):.1f} symbols/sec")
+    
+    async def _log_detailed_completion_report(self):
+        """Generate and log detailed completion report with all failed symbols"""
+        
+        # Generate detailed report
+        detailed_report = self.metrics_tracker.generate_detailed_report()
+        
+        # Log the entire report
+        logger.info("\n" + "=" * 80)
+        logger.info("📋 DETAILED COMPLETION REPORT")
+        logger.info("=" * 80)
+        for line in detailed_report.split('\n'):
+            logger.info(line)
+        logger.info("=" * 80 + "\n")
+        
+        # Save failed symbols to JSON file
+        try:
+            log_dir = os.path.dirname(self.settings.log_file_path) if hasattr(self.settings, 'log_file_path') else 'logs'
+            if not os.path.exists(log_dir):
+                os.makedirs(log_dir, exist_ok=True)
+            
+            failed_symbols_file = os.path.join(log_dir, f"failed_symbols_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json")
+            self.metrics_tracker.save_failed_symbols_json(failed_symbols_file)
+            logger.info(f"💾 Detailed failed symbols report saved to: {failed_symbols_file}")
+        except Exception as e:
+            logger.warning(f"Could not save failed symbols JSON file: {e}")
+        
+        # Log summary of failed symbols grouped by symbol
+        if self.metrics_tracker.metrics.failed_symbols_list:
+            logger.info("\n" + "=" * 80)
+            logger.info("🚫 FAILED SYMBOLS SUMMARY (Grouped by Symbol)")
+            logger.info("=" * 80)
+            
+            # Group failures by symbol
+            from collections import defaultdict
+            symbol_failures = defaultdict(list)
+            for failed in self.metrics_tracker.metrics.failed_symbols_list:
+                symbol_failures[failed.symbol].append(failed)
+            
+            # Log each symbol's failures
+            for symbol, failures in sorted(symbol_failures.items()):
+                logger.info(f"\n❌ {symbol} ({failures[0].exchange}, {failures[0].instrument_type}):")
+                logger.info(f"   Total Failures: {len(failures)}")
+                for failure in failures:
+                    logger.info(f"   • Timeframe: {failure.timeframe} | Date Range: {failure.date_range}")
+                    logger.info(f"     Reason: {failure.failure_reason.value} | Error: {failure.error_message[:100]}")
+            
+            logger.info("\n" + "=" * 80)
     
     async def _handle_interruption(self):
         """Handle graceful shutdown on interruption"""
