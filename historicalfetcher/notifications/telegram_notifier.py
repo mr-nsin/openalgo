@@ -298,9 +298,16 @@ class TelegramNotifier:
             for i, result in enumerate(results):
                 chat_id = self.chat_ids[i]
                 if isinstance(result, Exception):
-                    logger.error(f"Failed to send Telegram message to {chat_id}: {result}")
+                    error_msg = str(result)
+                    # Handle specific Telegram API errors gracefully
+                    if "403" in error_msg and "bots can't send messages to bots" in error_msg:
+                        logger.warning(f"⚠️ Telegram: Cannot send to bot chat_id {chat_id}. Use a user chat_id instead.")
+                    elif "403" in error_msg:
+                        logger.warning(f"⚠️ Telegram: Forbidden for chat_id {chat_id}. Check if bot has access.")
+                    else:
+                        logger.error(f"Failed to send Telegram message to {chat_id}: {result}")
                     self.stats['failed_sent'] += 1
-                    self.stats['last_error'] = str(result)
+                    self.stats['last_error'] = error_msg
                 else:
                     logger.info(f"Telegram message sent successfully to {chat_id}")
                     self.stats['successful_sent'] += 1

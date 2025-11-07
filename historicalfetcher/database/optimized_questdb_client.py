@@ -297,7 +297,6 @@ class OptimizedQuestDBClient:
             self.stats['successful_inserts'] += 1
             self.stats['total_records_inserted'] += len(candles)
             
-            logger.debug(f"Inserted {len(candles)} basic records for {symbol_info.symbol}")
             return len(candles)
             
         except Exception as e:
@@ -482,7 +481,6 @@ class OptimizedQuestDBClient:
         self.stats['successful_inserts'] += 1
         self.stats['total_records_inserted'] += len(indicator_results)
         
-        logger.debug(f"Inserted {len(indicator_results)} enhanced equity records")
         return len(indicator_results)
     
     async def _insert_enhanced_futures_data(
@@ -796,10 +794,229 @@ class OptimizedQuestDBClient:
         # Similar to equity but with futures-specific fields
         return await self._insert_enhanced_equity_data(table_name, indicator_results)
     
+    async def _get_table_columns(self, table_name: str) -> set:
+        """Get list of columns that exist in the table by trying to query it"""
+        try:
+            async with self.pool.acquire() as conn:
+                # Try to get one row to see what columns exist
+                # Even if table is empty, this will return column names
+                try:
+                    result = await conn.fetchrow(f"SELECT * FROM {table_name} LIMIT 1")
+                    if result:
+                        columns = set(result.keys())
+                        return columns
+                except Exception as query_error:
+                    # If table is empty or doesn't exist, try to check if it exists
+                    # by attempting a count query
+                    try:
+                        await conn.fetchval(f"SELECT COUNT(*) FROM {table_name}")
+                        # Table exists but is empty - try to get schema another way
+                        # For empty tables, we'll need to check the actual schema
+                        # QuestDB doesn't have easy DESCRIBE, so we'll use a fallback
+                        return set()  # Return empty to use all columns (table will be created with new schema)
+                    except:
+                        # Table doesn't exist
+                        return set()
+        except Exception as e:
+            logger.debug(f"Could not get columns for table {table_name}: {e}")
+            # Return empty set - will use all columns for new table
+            return set()
+    
     async def _insert_enhanced_index_data(self, table_name: str, indicator_results: List[IndicatorResult]) -> int:
-        """Insert enhanced index data - placeholder implementation"""
-        # Similar to equity but without volume-based indicators
-        return await self._insert_enhanced_equity_data(table_name, indicator_results)
+        """Insert enhanced index data - dynamically builds query based on existing table columns"""
+        
+        if not indicator_results:
+            return 0
+        
+        from historicalfetcher.models.data_models import TimeFrameCode
+        
+        # Get existing table columns
+        existing_columns = await self._get_table_columns(table_name)
+        
+        # If table doesn't exist or has no columns, it will be created with new schema
+        # For now, build query based on what columns exist
+        # Define all possible columns in order
+        all_columns = [
+            'tf', 'open', 'high', 'low', 'close',
+            'ema_9', 'ema_21', 'ema_50', 'ema_200', 'sma_20', 'sma_50', 'sma_100',
+            'rsi_14', 'macd_line', 'macd_signal', 'macd_histogram', 'stoch_k', 'stoch_d',
+            'atr_14', 'bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'bb_percent',
+            'supertrend_7_3', 'supertrend_signal_7_3', 'supertrend_10_3', 'supertrend_signal_10_3', 'parabolic_sar',
+            'pivot_point', 'resistance_1', 'resistance_2', 'resistance_3', 'support_1', 'support_2', 'support_3',
+            'bid_1', 'bid_qty_1', 'bid_2', 'bid_qty_2', 'bid_3', 'bid_qty_3', 'bid_4', 'bid_qty_4', 'bid_5', 'bid_qty_5',
+            'ask_1', 'ask_qty_1', 'ask_2', 'ask_qty_2', 'ask_3', 'ask_qty_3', 'ask_4', 'ask_qty_4', 'ask_5', 'ask_qty_5',
+            'bid_ask_spread', 'bid_ask_spread_pct', 'mid_price', 'total_bid_qty', 'total_ask_qty',
+            'price_change', 'price_change_pct', 'high_low_pct',
+            'advance_decline_ratio', 'high_low_index', 'mcclellan_oscillator',
+            'realized_volatility', 'garch_volatility',
+            'timestamp'
+        ]
+        
+        # Filter to only columns that exist in the table (or if table is new, use all)
+        if existing_columns:
+            # Table exists - only use columns that exist
+            columns_to_use = [col for col in all_columns if col in existing_columns]
+            if not columns_to_use:
+                # Fallback: use basic columns if nothing matches
+                columns_to_use = ['tf', 'open', 'high', 'low', 'close', 'timestamp']
+        else:
+            # Table doesn't exist or is new - use all columns (will be created with new schema)
+            columns_to_use = all_columns
+        
+        insert_data = []
+        
+        for result in indicator_results:
+            # Convert timeframe to string for SYMBOL storage
+            tf_string = TimeFrameCode.to_string(result.timeframe)
+            
+            # Build data tuple dynamically based on columns_to_use
+            data_values = []
+            column_mapping = {
+                'tf': tf_string,
+                'open': result.open,
+                'high': result.high,
+                'low': result.low,
+                'close': result.close,
+                'ema_9': result.indicators.get('ema_9'),
+                'ema_21': result.indicators.get('ema_21'),
+                'ema_50': result.indicators.get('ema_50'),
+                'ema_200': result.indicators.get('ema_200'),
+                'sma_20': result.indicators.get('sma_20'),
+                'sma_50': result.indicators.get('sma_50'),
+                'sma_100': result.indicators.get('sma_100'),
+                'rsi_14': result.indicators.get('rsi_14'),
+                'macd_line': result.indicators.get('macd_line'),
+                'macd_signal': result.indicators.get('macd_signal'),
+                'macd_histogram': result.indicators.get('macd_histogram'),
+                'stoch_k': result.indicators.get('stoch_k'),
+                'stoch_d': result.indicators.get('stoch_d'),
+                'atr_14': result.indicators.get('atr_14'),
+                'bb_upper': result.indicators.get('bb_upper'),
+                'bb_middle': result.indicators.get('bb_middle'),
+                'bb_lower': result.indicators.get('bb_lower'),
+                'bb_width': result.indicators.get('bb_width'),
+                'bb_percent': result.indicators.get('bb_percent'),
+                'supertrend_7_3': result.indicators.get('supertrend_7_3'),
+                'supertrend_signal_7_3': result.indicators.get('supertrend_signal_7_3'),
+                'supertrend_10_3': result.indicators.get('supertrend_10_3'),
+                'supertrend_signal_10_3': result.indicators.get('supertrend_signal_10_3'),
+                'parabolic_sar': result.indicators.get('parabolic_sar'),
+                'pivot_point': result.derived_metrics.get('pivot_point') if result.derived_metrics else None,
+                'resistance_1': result.derived_metrics.get('resistance_1') if result.derived_metrics else None,
+                'resistance_2': result.derived_metrics.get('resistance_2') if result.derived_metrics else None,
+                'resistance_3': result.derived_metrics.get('resistance_3') if result.derived_metrics else None,
+                'support_1': result.derived_metrics.get('support_1') if result.derived_metrics else None,
+                'support_2': result.derived_metrics.get('support_2') if result.derived_metrics else None,
+                'support_3': result.derived_metrics.get('support_3') if result.derived_metrics else None,
+                'bid_1': result.market_depth.get('bid_1') if result.market_depth else None,
+                'bid_qty_1': result.market_depth.get('bid_qty_1') if result.market_depth else None,
+                'bid_2': result.market_depth.get('bid_2') if result.market_depth else None,
+                'bid_qty_2': result.market_depth.get('bid_qty_2') if result.market_depth else None,
+                'bid_3': result.market_depth.get('bid_3') if result.market_depth else None,
+                'bid_qty_3': result.market_depth.get('bid_qty_3') if result.market_depth else None,
+                'bid_4': result.market_depth.get('bid_4') if result.market_depth else None,
+                'bid_qty_4': result.market_depth.get('bid_qty_4') if result.market_depth else None,
+                'bid_5': result.market_depth.get('bid_5') if result.market_depth else None,
+                'bid_qty_5': result.market_depth.get('bid_qty_5') if result.market_depth else None,
+                'ask_1': result.market_depth.get('ask_1') if result.market_depth else None,
+                'ask_qty_1': result.market_depth.get('ask_qty_1') if result.market_depth else None,
+                'ask_2': result.market_depth.get('ask_2') if result.market_depth else None,
+                'ask_qty_2': result.market_depth.get('ask_qty_2') if result.market_depth else None,
+                'ask_3': result.market_depth.get('ask_3') if result.market_depth else None,
+                'ask_qty_3': result.market_depth.get('ask_qty_3') if result.market_depth else None,
+                'ask_4': result.market_depth.get('ask_4') if result.market_depth else None,
+                'ask_qty_4': result.market_depth.get('ask_qty_4') if result.market_depth else None,
+                'ask_5': result.market_depth.get('ask_5') if result.market_depth else None,
+                'ask_qty_5': result.market_depth.get('ask_qty_5') if result.market_depth else None,
+                'bid_ask_spread': result.market_depth.get('bid_ask_spread') if result.market_depth else None,
+                'bid_ask_spread_pct': result.market_depth.get('bid_ask_spread_pct') if result.market_depth else None,
+                'mid_price': result.market_depth.get('mid_price') if result.market_depth else None,
+                'total_bid_qty': result.market_depth.get('total_bid_qty') if result.market_depth else None,
+                'total_ask_qty': result.market_depth.get('total_ask_qty') if result.market_depth else None,
+                'price_change': result.derived_metrics.get('price_change') if result.derived_metrics else None,
+                'price_change_pct': result.derived_metrics.get('price_change_pct') if result.derived_metrics else None,
+                'high_low_pct': result.derived_metrics.get('high_low_pct') if result.derived_metrics else None,
+                'advance_decline_ratio': result.indicators.get('advance_decline_ratio'),
+                'high_low_index': result.indicators.get('high_low_index'),
+                'mcclellan_oscillator': result.indicators.get('mcclellan_oscillator'),
+                'realized_volatility': result.indicators.get('realized_volatility'),
+                'garch_volatility': result.indicators.get('garch_volatility'),
+                'timestamp': result.timestamp
+            }
+            
+            # Build tuple with only columns that exist in table
+            data_tuple = tuple(column_mapping[col] for col in columns_to_use)
+            insert_data.append(data_tuple)
+        
+        # Build insert query dynamically based on columns_to_use
+        columns_str = ', '.join(columns_to_use)
+        placeholders = ', '.join([f'${i+1}' for i in range(len(columns_to_use))])
+        
+        insert_query = f"""
+            INSERT INTO {table_name} ({columns_str})
+            VALUES ({placeholders})
+        """
+        
+        try:
+            return await self._execute_batch_insert(insert_query, insert_data, table_name)
+        except Exception as e:
+            error_str = str(e)
+            if "Invalid column" in error_str or "column" in error_str.lower():
+                # Table has old schema - get actual columns and retry with only those
+                logger.warning(f"Table {table_name} has old schema (missing columns), detecting actual columns...")
+                
+                # Try to get actual columns by querying the table
+                actual_columns = await self._get_table_columns(table_name)
+                
+                if actual_columns:
+                    # Use only columns that actually exist
+                    safe_columns = [col for col in all_columns if col in actual_columns]
+                    if not safe_columns:
+                        # Fallback to basic columns
+                        safe_columns = ['tf', 'open', 'high', 'low', 'close', 'timestamp']
+                else:
+                    # Can't detect columns, use basic set
+                    safe_columns = ['tf', 'open', 'high', 'low', 'close', 'timestamp']
+                
+                logger.info(f"Retrying insert for {table_name} with columns: {safe_columns}")
+                
+                # Rebuild data with only safe columns
+                safe_insert_data = []
+                for result in indicator_results:
+                    tf_string = TimeFrameCode.to_string(result.timeframe)
+                    # Rebuild mapping for this result
+                    safe_mapping = {
+                        'tf': tf_string,
+                        'open': result.open,
+                        'high': result.high,
+                        'low': result.low,
+                        'close': result.close,
+                        'timestamp': result.timestamp
+                    }
+                    # Add other columns if they exist in safe_columns
+                    for col in safe_columns:
+                        if col not in safe_mapping:
+                            if col.startswith('ema_') or col.startswith('sma_') or col in ['rsi_14', 'macd_line', 'macd_signal', 'macd_histogram', 'stoch_k', 'stoch_d', 'atr_14', 'bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'bb_percent', 'supertrend_7_3', 'supertrend_signal_7_3', 'supertrend_10_3', 'supertrend_signal_10_3', 'parabolic_sar', 'advance_decline_ratio', 'high_low_index', 'mcclellan_oscillator', 'realized_volatility', 'garch_volatility']:
+                                safe_mapping[col] = result.indicators.get(col)
+                            elif col in ['pivot_point', 'resistance_1', 'resistance_2', 'resistance_3', 'support_1', 'support_2', 'support_3', 'price_change', 'price_change_pct', 'high_low_pct']:
+                                safe_mapping[col] = result.derived_metrics.get(col) if result.derived_metrics else None
+                            elif col.startswith('bid_') or col.startswith('ask_') or col in ['bid_ask_spread', 'bid_ask_spread_pct', 'mid_price', 'total_bid_qty', 'total_ask_qty']:
+                                safe_mapping[col] = result.market_depth.get(col) if result.market_depth else None
+                    
+                    safe_tuple = tuple(safe_mapping[col] for col in safe_columns)
+                    safe_insert_data.append(safe_tuple)
+                
+                safe_columns_str = ', '.join(safe_columns)
+                safe_placeholders = ', '.join([f'${i+1}' for i in range(len(safe_columns))])
+                safe_insert_query = f"""
+                    INSERT INTO {table_name} ({safe_columns_str})
+                    VALUES ({safe_placeholders})
+                """
+                
+                return await self._execute_batch_insert(safe_insert_query, safe_insert_data, table_name)
+            else:
+                # Re-raise if it's not a column error
+                raise
     
     async def _insert_equity_data(
         self,
@@ -809,6 +1026,9 @@ class OptimizedQuestDBClient:
         candles: List[HistoricalCandle]
     ) -> int:
         """Insert equity data with optimized schema"""
+        
+        from historicalfetcher.models.data_models import TimeFrameCode
+        tf_string = TimeFrameCode.to_string(tf_code)
         
         # Prepare batch data
         insert_data = []
@@ -838,6 +1058,9 @@ class OptimizedQuestDBClient:
         candles: List[HistoricalCandle]
     ) -> int:
         """Insert futures data with contract tracking"""
+        
+        from historicalfetcher.models.data_models import TimeFrameCode
+        tf_string = TimeFrameCode.to_string(tf_code)
         
         expiry_date = self._parse_expiry_date(symbol_info.expiry) if symbol_info.expiry else None
         
@@ -871,6 +1094,9 @@ class OptimizedQuestDBClient:
         candles: List[HistoricalCandle]
     ) -> int:
         """Insert options data with optimized encoding"""
+        
+        from historicalfetcher.models.data_models import TimeFrameCode
+        tf_string = TimeFrameCode.to_string(tf_code)
         
         # Convert option type to numeric (1=CE, 2=PE)
         option_type_code = 1 if symbol_info.instrument_type == InstrumentType.CALL_OPTION else 2
@@ -914,6 +1140,9 @@ class OptimizedQuestDBClient:
         candles: List[HistoricalCandle]
     ) -> int:
         """Insert index data (no volume/OI)"""
+        
+        from historicalfetcher.models.data_models import TimeFrameCode
+        tf_string = TimeFrameCode.to_string(tf_code)
         
         insert_data = []
         for candle in candles:
@@ -1201,22 +1430,14 @@ class OptimizedQuestDBClient:
             
             async with self.pool.acquire() as conn:
                 # Get the latest timestamp from the table for this timeframe
-                # Convert timeframe string to numeric code
-                timeframe_map = {
-                    '1m': TimeFrameCode.MINUTE_1,
-                    '3m': TimeFrameCode.MINUTE_3,
-                    '5m': TimeFrameCode.MINUTE_5,
-                    '15m': TimeFrameCode.MINUTE_15,
-                    '30m': TimeFrameCode.MINUTE_30,
-                    '1h': TimeFrameCode.HOUR_1,
-                    'D': TimeFrameCode.DAILY
-                }
-                tf_code = timeframe_map.get(timeframe, TimeFrameCode.MINUTE_1).value
+                # Use string timeframe (tf is now SYMBOL type with string values)
+                from historicalfetcher.models.data_models import TimeFrameCode
+                tf_string = TimeFrameCode.to_string(timeframe)
                 
                 query = f"""
                     SELECT MAX(timestamp) as last_date 
                     FROM {table_name} 
-                    WHERE tf = {tf_code}
+                    WHERE tf = '{tf_string}'
                 """
                 result = await conn.fetchval(query)
                 

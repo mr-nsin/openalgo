@@ -318,7 +318,7 @@ class EnhancedTableSchemas:
     
     @staticmethod
     def get_enhanced_index_schema(table_name: str) -> str:
-        """Enhanced index schema with comprehensive indicators"""
+        """Enhanced index schema with comprehensive indicators - includes all feasible columns from equity"""
         return f"""
         CREATE TABLE IF NOT EXISTS {table_name} (
             tf SYMBOL CAPACITY 10 CACHE, -- Timeframe: '1m','3m','5m','15m','30m','1h','D'
@@ -348,24 +348,36 @@ class EnhancedTableSchemas:
             supertrend_10_3 DOUBLE, supertrend_signal_10_3 BYTE,
             parabolic_sar DOUBLE,
             
-            -- Index-Specific Indicators
-            advance_decline_ratio DOUBLE, -- A/D ratio
-            high_low_index DOUBLE,      -- New highs vs new lows
-            mcclellan_oscillator DOUBLE, -- Market breadth
-            
             -- Support/Resistance Levels
             pivot_point DOUBLE,
             resistance_1 DOUBLE, resistance_2 DOUBLE, resistance_3 DOUBLE,
             support_1 DOUBLE, support_2 DOUBLE, support_3 DOUBLE,
             
-            -- Volatility Measures
-            realized_volatility DOUBLE, -- 20-day realized volatility
-            garch_volatility DOUBLE,    -- GARCH volatility forecast
+            -- Market Microstructure (if available from API)
+            bid_1 DOUBLE, bid_qty_1 LONG, bid_2 DOUBLE, bid_qty_2 LONG,
+            bid_3 DOUBLE, bid_qty_3 LONG, bid_4 DOUBLE, bid_qty_4 LONG,
+            bid_5 DOUBLE, bid_qty_5 LONG,
+            ask_1 DOUBLE, ask_qty_1 LONG, ask_2 DOUBLE, ask_qty_2 LONG,
+            ask_3 DOUBLE, ask_qty_3 LONG, ask_4 DOUBLE, ask_qty_4 LONG,
+            ask_5 DOUBLE, ask_qty_5 LONG,
+            
+            -- Derived Market Data
+            bid_ask_spread DOUBLE, bid_ask_spread_pct DOUBLE,
+            mid_price DOUBLE, total_bid_qty LONG, total_ask_qty LONG,
             
             -- Change Metrics
             price_change DOUBLE,
             price_change_pct DOUBLE,
             high_low_pct DOUBLE,
+            
+            -- Index-Specific Indicators (optional, may not be available)
+            advance_decline_ratio DOUBLE, -- A/D ratio
+            high_low_index DOUBLE,      -- New highs vs new lows
+            mcclellan_oscillator DOUBLE, -- Market breadth
+            
+            -- Volatility Measures (optional, may not be available)
+            realized_volatility DOUBLE, -- 20-day realized volatility
+            garch_volatility DOUBLE,    -- GARCH volatility forecast
             
             timestamp TIMESTAMP
         ) TIMESTAMP(timestamp) PARTITION BY DAY;

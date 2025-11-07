@@ -74,7 +74,6 @@ class IndicatorEngine:
                 logger.warning(f"Options calculator initialization failed: {e}")
                 self.options_calculator = None
         
-        logger.info("Indicator Engine initialized with optimized Numba functions")
     
     async def calculate_equity_indicators(
         self,

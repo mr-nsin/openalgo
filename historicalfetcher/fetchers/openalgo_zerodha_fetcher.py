@@ -150,11 +150,9 @@ class OpenAlgoZerodhaHistoricalFetcher:
                     self._interval_cache[timeframe_key] = self._get_zerodha_interval(timeframe)
                 zerodha_interval = self._interval_cache[timeframe_key]
                 
-                logger.debug(f"Fetching {timeframe.value} data for {symbol} ({exchange}) from {from_str} to {to_str}")
                 
                 # 🔥 USE SAME SIMPLE APPROACH AS test_history_format.py
                 # Skip complex auth token logic and use OpenAlgo API client directly
-                logger.debug(f"Using simplified OpenAlgo API client approach for {symbol}")
                 
                 
                 # Run in thread pool to avoid blocking with retry logic
@@ -207,19 +205,8 @@ class OpenAlgoZerodhaHistoricalFetcher:
                             success, response_data, status_code = await loop.run_in_executor(
                                 executor, make_simple_api_call
                             )
-                            # Log the actual API response for debugging
-                            logger.debug(f"API call successful for {symbol}: success={success}, status_code={status_code}")
                             if not success:
-                                logger.warning(f"API returned failure for {symbol}: {response_data}")
-                            else:
-                                # 🔍 LOG FIRST RECORD OF EVERY SUCCESSFUL API RESPONSE
-                                data = response_data.get('data', [])
-                                if data and len(data) > 0:
-                                    first_record = data[0]
-                                    logger.info(f"📊 FIRST RECORD for {symbol} ({exchange}, {zerodha_interval}): {first_record}")
-                                    logger.info(f"📈 Total records received for {symbol}: {len(data)}")
-                                else:
-                                    logger.warning(f"⚠️ No data records received for {symbol}")
+                                logger.error(f"❌ API returned failure for {symbol}: {response_data}")
                             break  # Success, exit retry loop
                     except Exception as retry_error:
                         error_msg = str(retry_error)
@@ -261,52 +248,37 @@ class OpenAlgoZerodhaHistoricalFetcher:
                 if not success:
                     raise Exception(f"Failed to fetch historical data: {response_data}")
                 
-                # 🔍 DEBUG: Log full response structure
-                # logger.info(f"🔍 FULL RESPONSE for {symbol}: {response_data}")
-                logger.info(f"🔍 RESPONSE TYPE: {type(response_data)}")
-                logger.info(f"🔍 RESPONSE KEYS: {list(response_data.keys()) if isinstance(response_data, dict) else 'Not a dict'}")
-                
                 # Convert response to DataFrame
                 data = response_data.get('data', [])
-                logger.info(f"🔍 EXTRACTED DATA TYPE: {type(data)}, LENGTH: {len(data) if hasattr(data, '__len__') else 'N/A'}")
                 
-                # 🔍 DEBUG: Log data conversion process
-                logger.info(f"🔍 DATA CONVERSION for {symbol}: data type = {type(data)}, length = {len(data) if hasattr(data, '__len__') else 'N/A'}")
+                # Log first record from API response with all columns
+                if isinstance(data, list) and data and len(data) > 0:
+                    first_record = data[0]
+                    logger.info(f"📋 API Response - {symbol} ({timeframe.value}): First record columns: {list(first_record.keys()) if isinstance(first_record, dict) else 'N/A'}")
+                    logger.info(f"📋 API Response - {symbol} ({timeframe.value}): First record: {first_record}")
+                elif isinstance(data, pd.DataFrame) and not data.empty:
+                    first_record = data.iloc[0].to_dict()
+                    logger.info(f"📋 API Response - {symbol} ({timeframe.value}): First record columns: {list(data.columns)}")
+                    logger.info(f"📋 API Response - {symbol} ({timeframe.value}): First record: {first_record}")
                 
                 # Handle case where data might be a list instead of DataFrame
                 if isinstance(data, list):
                     if data:  # If list has data, convert to DataFrame
-                        logger.info(f"🔍 SAMPLE DATA for {symbol}: {data[0] if data else 'None'}")
                         df = pd.DataFrame(data)
-                        logger.info(f"✅ Converted {len(data)} records to DataFrame for {symbol} - DataFrame shape: {df.shape}")
                     else:  # If empty list, create empty DataFrame
                         df = pd.DataFrame()
-                        logger.warning(f"⚠️ Empty data list for {symbol}")
                 elif isinstance(data, pd.DataFrame):
                     df = data
-                    logger.info(f"✅ Using existing DataFrame with {len(df)} rows for {symbol}")
                 else:
                     # Fallback: create empty DataFrame
                     df = pd.DataFrame()
                     logger.error(f"❌ Unknown data type {type(data)} for {symbol}, creating empty DataFrame")
                 
-                # 🔍 DEBUG: Log before candle conversion
-                logger.info(f"🔍 ABOUT TO CONVERT TO CANDLES: DataFrame shape = {df.shape if not df.empty else 'EMPTY'}")
-                
                 # Convert DataFrame to HistoricalCandle objects (optimized) 
                 if df.empty:
-                    # Enhanced error handling for empty dataframes
-                    if timeframe in [TimeFrame.MINUTE_1, TimeFrame.MINUTE_3, TimeFrame.MINUTE_5, 
-                                   TimeFrame.MINUTE_15, TimeFrame.MINUTE_30, TimeFrame.HOUR_1]:
-                        logger.warning(f"⚠️ No intraday data available for {symbol} ({timeframe.value}) from {from_str} to {to_str}")
-                        logger.info(f"💡 This could be due to: market hours, weekends, or data availability")
-                    else:
-                        logger.warning(f"⚠️ No daily data available for {symbol} ({timeframe.value}) from {from_str} to {to_str}")
                     candles = []
                 else:
-                    logger.info(f"🔄 Converting DataFrame with {len(df)} rows to candles for {symbol}")
                     candles = await self._dataframe_to_candles_async(df)
-                    logger.info(f"✅ CONVERSION SUCCESS: {len(candles)} candles created for {symbol}")
                 
                 self.stats['total_requests'] += 1
                 self.stats['successful_requests'] += 1
@@ -352,28 +324,19 @@ class OpenAlgoZerodhaHistoricalFetcher:
     async def _dataframe_to_candles_async(self, df) -> List[HistoricalCandle]:
         """Convert pandas DataFrame to HistoricalCandle objects (optimized async version)"""
         
-        # 🔍 DEBUG: Log input type and size
-        logger.info(f"🔍 CANDLE CONVERSION INPUT: type = {type(df)}, size = {len(df) if hasattr(df, '__len__') else 'N/A'}")
-        
         # Handle case where df might be a list instead of DataFrame
         if isinstance(df, list):
             if not df:  # Empty list
-                logger.warning(f"⚠️ Empty list provided for candle conversion")
                 return []
             # Convert list to DataFrame
             df = pd.DataFrame(df)
-            logger.info(f"✅ Converted list to DataFrame: {df.shape}")
         elif not isinstance(df, pd.DataFrame):
             # If it's neither list nor DataFrame, return empty
             logger.error(f"❌ Invalid input type for candle conversion: {type(df)}")
             return []
         
         if df.empty:
-            logger.warning(f"⚠️ Empty DataFrame provided for candle conversion")
             return []
-        
-        # 🔍 DEBUG: Log DataFrame details
-        logger.info(f"🔍 DataFrame details: shape = {df.shape}, columns = {list(df.columns)}")
         
         # Check required columns (timestamp might be missing from API response)
         required_columns = ['open', 'high', 'low', 'close', 'volume']
@@ -621,11 +584,21 @@ class OpenAlgoSymbolManager:
                 batch = symbols[i:i + batch_size]
                 
                 for symbol in batch:
-                    # Create symbol info object
+                    # Categorize by instrument type first
+                    instrument_type = symbol.instrumenttype
+                    exchange = symbol.exchange
+                    
+                    # CRITICAL: Check exchange first to identify INDEX symbols
+                    # INDEX symbols have exchange='NSE_INDEX' or 'BSE_INDEX' (even if instrumenttype='EQ')
+                    # Override instrument_type to 'INDEX' for proper table creation
+                    if exchange in ['NSE_INDEX', 'BSE_INDEX']:
+                        instrument_type = 'INDEX'  # Override to INDEX for proper table schema
+                    
+                    # Create symbol info object with corrected instrument_type
                     symbol_info = SymbolInfo(
                         symbol=symbol.symbol,
                         exchange=symbol.exchange,
-                        instrument_type=symbol.instrumenttype,
+                        instrument_type=instrument_type,  # Use corrected type
                         token=symbol.token,
                         name=symbol.name,
                         expiry=symbol.expiry,
@@ -635,11 +608,6 @@ class OpenAlgoSymbolManager:
                     )
                     
                     # Categorize by instrument type
-                    instrument_type = symbol.instrumenttype
-                    exchange = symbol.exchange
-                    
-                    # CRITICAL: Check exchange first to identify INDEX symbols
-                    # INDEX symbols have exchange='NSE_INDEX' or 'BSE_INDEX' (even if instrumenttype='EQ')
                     if exchange in ['NSE_INDEX', 'BSE_INDEX']:
                         # All symbols from INDEX exchanges go to INDEX category
                         symbols_by_type['INDEX'].append(symbol_info)

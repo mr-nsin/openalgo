@@ -67,46 +67,26 @@ class OpenAlgoAPIService:
                 if response.index.name == 'timestamp' or 'timestamp' in str(response.index.name):
                     # Reset index to convert timestamp from index back to column
                     response = response.reset_index()
-                    logger.info(f"✅ Reset timestamp index to column for {symbol}")
                 
                 # Ensure all responses include 'oi' field, set to 0 if not present
                 if 'oi' not in response.columns:
                     response['oi'] = 0
-                
-                # 🔍 DEBUG: Log DataFrame structure after reset
-                logger.info(f"🔍 DataFrame columns after reset: {list(response.columns)}")
                 
                 # 🔥 FIX: Convert Timestamp objects to numeric timestamps for candle conversion
                 if 'timestamp' in response.columns:
                     # Check if timestamp is Timestamp object and convert to numeric
                     if hasattr(response['timestamp'].iloc[0], 'timestamp'):
                         response['timestamp'] = response['timestamp'].apply(lambda x: int(x.timestamp()))
-                        logger.info(f"✅ Converted Timestamp objects to numeric timestamps for {symbol}")
                 
                 # Convert to records format
                 data_records = response.to_dict(orient='records')
-                
-                # Log first record for debugging
-                if data_records:
-                    first_record = data_records[0]
-                    logger.info(f"🎯 OPENALGO API SUCCESS - First record for {symbol} ({exchange}, {interval}): {first_record}")
-                    logger.info(f"📊 OPENALGO API SUCCESS - Total records for {symbol}: {len(data_records)}")
                 
                 return True, {
                     'status': 'success',
                     'data': data_records
                 }, 200
             else:
-                # Enhanced logging for empty responses
-                if isinstance(response, pd.DataFrame):
-                    logger.warning(f"⚠️ OPENALGO API - Empty DataFrame returned for {symbol} ({exchange}, {interval})")
-                else:
-                    logger.warning(f"⚠️ OPENALGO API - No records returned for {symbol} ({exchange}, {interval})")
-                
-                # Log potential reasons for empty data
-                if interval in ['1m', '3m', '5m', '15m', '30m', '1h']:
-                    logger.info(f"💡 Intraday data might be unavailable due to: market hours, weekends, or data source limitations")
-                
+                # Empty response - will be handled by caller
                 return True, {
                     'status': 'success',
                     'data': []

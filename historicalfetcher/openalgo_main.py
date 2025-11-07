@@ -168,25 +168,18 @@ class OpenAlgoHistoricalDataFetcher:
             if 'INDEX' in symbols_by_type and symbols_by_type['INDEX']:
                 index_symbols = symbols_by_type['INDEX']
                 
-                # Log major indices that will be processed first
-                major_indices = ['NIFTY', 'BANKNIFTY', 'SENSEX', 'NIFTY50', 'NIFTY 50', 'NIFTY BANK', 'NIFTY IT']
-                major_found = [s for s in index_symbols[:10] if any(major in s.symbol.upper() for major in major_indices)]
-                if major_found:
-                    logger.info(f"📊 Major indices to be processed first: {', '.join([s.symbol for s in major_found])}")
-                
                 # Separate NSE_INDEX and other INDEX symbols
                 nse_index_symbols = [s for s in index_symbols if s.exchange == 'NSE_INDEX']
                 other_index_symbols = [s for s in index_symbols if s.exchange != 'NSE_INDEX']
                 
                 # Process NSE_INDEX first (includes NIFTY, BANKNIFTY, etc.)
                 if nse_index_symbols:
-                    logger.info(f"🔄 Processing NSE_INDEX symbols first ({len(nse_index_symbols):,} symbols)")
-                    logger.info(f"   First 5: {', '.join([s.symbol for s in nse_index_symbols[:5]])}")
+                    logger.info(f"🔄 Processing {len(nse_index_symbols):,} NSE_INDEX symbols")
                     await self._process_instrument_type('INDEX', nse_index_symbols)
                 
                 # Then process other INDEX symbols (BSE_INDEX, etc.)
                 if other_index_symbols:
-                    logger.info(f"🔄 Processing other INDEX symbols ({len(other_index_symbols):,} symbols)")
+                    logger.info(f"🔄 Processing {len(other_index_symbols):,} other INDEX symbols")
                     await self._process_instrument_type('INDEX', other_index_symbols)
             
             # Process remaining instrument types in priority order
@@ -196,14 +189,14 @@ class OpenAlgoHistoricalDataFetcher:
                     
                 if instrument_type in symbols_by_type and symbols_by_type[instrument_type]:
                     symbols = symbols_by_type[instrument_type]
-                    logger.info(f"🔄 Processing {instrument_type} symbols ({len(symbols):,} symbols)")
+                    logger.info(f"🔄 Processing {len(symbols):,} {instrument_type} symbols")
                     await self._process_instrument_type(instrument_type, symbols)
             
             # Process any remaining instrument types not in priority list
             for instrument_type, symbols in symbols_by_type.items():
                 if instrument_type not in priority_order and instrument_type != 'INDEX':
                     if symbols:
-                        logger.info(f"🔄 Processing {instrument_type} symbols ({len(symbols):,} symbols)")
+                        logger.info(f"🔄 Processing {len(symbols):,} {instrument_type} symbols")
                         await self._process_instrument_type(instrument_type, symbols)
             
             # Finalize processing
@@ -400,6 +393,9 @@ class OpenAlgoHistoricalDataFetcher:
                     if not from_date or not to_date:
                         continue
                     
+                    # Log before fetching: Symbol, Timeframe, Date Range
+                    logger.info(f"📥 Fetching {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {from_date.date()} to {to_date.date()}")
+                    
                     # Fetch historical data
                     candles = await self.zerodha_fetcher.fetch_historical_data(
                         symbol_info,
@@ -409,6 +405,24 @@ class OpenAlgoHistoricalDataFetcher:
                     )
                     
                     if candles:
+                        # Calculate min/max timestamps from candles
+                        min_timestamp = min(c.timestamp for c in candles)
+                        max_timestamp = max(c.timestamp for c in candles)
+                        
+                        # Handle both datetime objects and Unix timestamps
+                        if isinstance(min_timestamp, datetime):
+                            min_time_str = min_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            min_time_str = datetime.fromtimestamp(min_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        if isinstance(max_timestamp, datetime):
+                            max_time_str = max_timestamp.strftime('%Y-%m-%d %H:%M:%S')
+                        else:
+                            max_time_str = datetime.fromtimestamp(max_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+                        
+                        # Log after fetching: Records count, Min/Max timestamp with symbol
+                        logger.info(f"📊 Received {symbol_info.symbol} | {len(candles):,} records | Min: {min_time_str} | Max: {max_time_str} | Timeframe: {timeframe.value}")
+                        
                         # Store in QuestDB
                         async with AsyncTimer(self.performance_monitor, f'store_{timeframe.value}'):
                             records_inserted = await self.questdb_client.upsert_historical_data_with_indicators(
@@ -432,11 +446,10 @@ class OpenAlgoHistoricalDataFetcher:
                             records_inserted
                         )
                         
-                        logger.debug(
-                            f"✅ {symbol_info.symbol} ({timeframe.value}): {records_inserted:,} records"
-                        )
+                        # Log after saving: Success with records inserted, symbol, timeframe, date range
+                        logger.info(f"✅ Saved {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {from_date.date()} to {to_date.date()} | Records: {records_inserted:,}")
                     else:
-                        logger.debug(f"⚠️ No data found for {symbol_info.symbol} ({timeframe.value})")
+                        logger.warning(f"⚠️ No data found for {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {from_date.date()} to {to_date.date()}")
                         
                         await self.questdb_client.update_fetch_status(
                             symbol_info,
@@ -517,29 +530,61 @@ class OpenAlgoHistoricalDataFetcher:
                 end_date = datetime.combine(today, datetime.min.time())
         
         # Check if we have existing data and should do incremental fetch
+        # Only do incremental fetch if last fetch was recent (within 7 days), otherwise do full fetch
         last_fetch_date = await self.questdb_client.get_last_fetch_date(symbol_info, timeframe.value)
         
-        if last_fetch_date and self.settings.start_date_override is None:
-            # Incremental fetch from last successful date
-            start_date = last_fetch_date
-            logger.debug(f"Incremental fetch for {symbol_info.symbol} from {start_date.date()}")
+        # Calculate full date range first
+        if self.settings.start_date_override:
+            try:
+                full_start_date = datetime.strptime(self.settings.start_date_override, "%Y-%m-%d")
+            except ValueError:
+                logger.warning(f"Invalid start_date_override: {self.settings.start_date_override}")
+                full_start_date = end_date - timedelta(days=self.settings.historical_days_limit)
         else:
-            # Full fetch based on settings
-            if self.settings.start_date_override:
-                try:
-                    start_date = datetime.strptime(self.settings.start_date_override, "%Y-%m-%d")
-                except ValueError:
-                    logger.warning(f"Invalid start_date_override: {self.settings.start_date_override}")
-                    start_date = end_date - timedelta(days=self.settings.historical_days_limit)
-            else:
-                start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+            full_start_date = end_date - timedelta(days=self.settings.historical_days_limit)
         
-        # Ensure start_date is not in the future
+        # Decide between incremental and full fetch
+        # IMPORTANT: Only do incremental if we have recent data AND the gap is small
+        # Otherwise, always do full fetch to ensure we have complete 365 days of data
+        if last_fetch_date and self.settings.start_date_override is None:
+            # Check if last fetch is recent (within 3 days) and covers enough data
+            days_since_last_fetch = (end_date - last_fetch_date).days
+            days_covered = (last_fetch_date - full_start_date).days if last_fetch_date > full_start_date else 0
+            
+            # Only do incremental if:
+            # 1. Last fetch was recent (within 3 days)
+            # 2. We already have most of the data (at least 90% of historical_days_limit)
+            if days_since_last_fetch <= 3 and days_covered >= (self.settings.historical_days_limit * 0.9):
+                # Recent data exists and we have most data, do incremental fetch
+                start_date = last_fetch_date
+            else:
+                # Gap is too large or don't have enough data, do full fetch
+                start_date = full_start_date
+        else:
+            # No existing data or override specified, do full fetch
+            start_date = full_start_date
+        
+        # Ensure start_date is not in the future and end_date is not in the future
+        today_datetime = datetime.combine(datetime.now().date(), datetime.min.time())
+        if end_date > today_datetime:
+            # End date should never be in the future
+            end_date = today_datetime
+            logger.warning(f"⚠️ Adjusted end_date to today for {symbol_info.symbol} ({timeframe.value})")
+        
         if start_date > end_date:
             start_date = end_date - timedelta(days=self.settings.historical_days_limit)
         
-        # Log the date range for debugging
-        logger.info(f"📅 Date range for {symbol_info.symbol} ({timeframe.value}): {start_date.date()} to {end_date.date()}")
+        # Ensure start_date is not in the future
+        if start_date > today_datetime:
+            start_date = today_datetime - timedelta(days=self.settings.historical_days_limit)
+            logger.warning(f"⚠️ Adjusted start_date to avoid future date for {symbol_info.symbol} ({timeframe.value})")
+        
+        # Calculate actual days in range
+        actual_days = (end_date - start_date).days
+        
+        # Warn if range is too small
+        if actual_days < self.settings.historical_days_limit * 0.5:
+            logger.warning(f"⚠️ Date range for {symbol_info.symbol} ({timeframe.value}) is only {actual_days} days, expected ~{self.settings.historical_days_limit} days")
         
         return start_date, end_date
     
