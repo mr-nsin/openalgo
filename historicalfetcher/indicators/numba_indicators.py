@@ -595,6 +595,423 @@ class NumbaIndicators:
     
     @staticmethod
     @jit(**NUMBA_CONFIG)
+    def ichimoku(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Ichimoku Cloud Indicator
+        
+        Returns:
+            Tuple of (tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b, chikou_span, cloud_top, cloud_bottom, cloud_color)
+            cloud_color: 1=Green (bullish), 0=Red (bearish)
+        """
+        n = len(close)
+        tenkan_sen = np.empty_like(close)
+        kijun_sen = np.empty_like(close)
+        senkou_span_a = np.empty_like(close)
+        senkou_span_b = np.empty_like(close)
+        chikou_span = np.empty_like(close)
+        cloud_top = np.empty_like(close)
+        cloud_bottom = np.empty_like(close)
+        cloud_color = np.empty_like(close, dtype=np.int8)
+        
+        # Tenkan-sen (Conversion Line) - 9-period
+        period_tenkan = 9
+        for i in range(period_tenkan - 1, n):
+            high_window = np.max(high[i-period_tenkan+1:i+1])
+            low_window = np.min(low[i-period_tenkan+1:i+1])
+            tenkan_sen[i] = (high_window + low_window) / 2.0
+        tenkan_sen[:period_tenkan-1] = np.nan
+        
+        # Kijun-sen (Base Line) - 26-period
+        period_kijun = 26
+        for i in range(period_kijun - 1, n):
+            high_window = np.max(high[i-period_kijun+1:i+1])
+            low_window = np.min(low[i-period_kijun+1:i+1])
+            kijun_sen[i] = (high_window + low_window) / 2.0
+        kijun_sen[:period_kijun-1] = np.nan
+        
+        # Senkou Span A (Leading Span A) - shifted forward by 26 periods
+        for i in range(n):
+            if i >= period_kijun - 1:
+                senkou_span_a[i] = (tenkan_sen[i] + kijun_sen[i]) / 2.0
+            else:
+                senkou_span_a[i] = np.nan
+        
+        # Senkou Span B (Leading Span B) - 52-period, shifted forward by 26 periods
+        period_senkou_b = 52
+        senkou_span_b_temp = np.empty_like(close)
+        for i in range(period_senkou_b - 1, n):
+            high_window = np.max(high[i-period_senkou_b+1:i+1])
+            low_window = np.min(low[i-period_senkou_b+1:i+1])
+            senkou_span_b_temp[i] = (high_window + low_window) / 2.0
+        senkou_span_b_temp[:period_senkou_b-1] = np.nan
+        
+        # Shift Senkou Span B forward by 26 periods
+        for i in range(n):
+            if i >= period_kijun - 1 and i < n - period_kijun + 1:
+                senkou_span_b[i] = senkou_span_b_temp[i - period_kijun + 1] if i - period_kijun + 1 >= period_senkou_b - 1 else np.nan
+            else:
+                senkou_span_b[i] = np.nan
+        
+        # Chikou Span (Lagging Span) - close shifted backward by 26 periods
+        for i in range(n):
+            if i < n - period_kijun + 1:
+                chikou_span[i] = close[i + period_kijun - 1]
+            else:
+                chikou_span[i] = np.nan
+        
+        # Cloud top and bottom
+        for i in range(n):
+            if not (np.isnan(senkou_span_a[i]) or np.isnan(senkou_span_b[i])):
+                cloud_top[i] = max(senkou_span_a[i], senkou_span_b[i])
+                cloud_bottom[i] = min(senkou_span_a[i], senkou_span_b[i])
+                cloud_color[i] = 1 if senkou_span_a[i] > senkou_span_b[i] else 0
+            else:
+                cloud_top[i] = np.nan
+                cloud_bottom[i] = np.nan
+                cloud_color[i] = 0
+        
+        return tenkan_sen, kijun_sen, senkou_span_a, senkou_span_b, chikou_span, cloud_top, cloud_bottom, cloud_color
+    
+    @staticmethod
+    @jit(**NUMBA_CONFIG)
+    def aroon(high: np.ndarray, low: np.ndarray, period: int = 25) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Aroon Indicator
+        
+        Returns:
+            Tuple of (aroon_up, aroon_down, aroon_oscillator)
+        """
+        n = len(high)
+        aroon_up = np.empty_like(high)
+        aroon_down = np.empty_like(high)
+        aroon_oscillator = np.empty_like(high)
+        
+        aroon_up[:period-1] = np.nan
+        aroon_down[:period-1] = np.nan
+        aroon_oscillator[:period-1] = np.nan
+        
+        for i in range(period - 1, n):
+            # Find highest high and lowest low in period
+            highest_high_idx = i
+            lowest_low_idx = i
+            
+            for j in range(i - period + 1, i + 1):
+                if high[j] > high[highest_high_idx]:
+                    highest_high_idx = j
+                if low[j] < low[lowest_low_idx]:
+                    lowest_low_idx = j
+            
+            # Calculate Aroon Up
+            periods_since_high = i - highest_high_idx
+            aroon_up[i] = ((period - periods_since_high) / period) * 100.0
+            
+            # Calculate Aroon Down
+            periods_since_low = i - lowest_low_idx
+            aroon_down[i] = ((period - periods_since_low) / period) * 100.0
+            
+            # Aroon Oscillator
+            aroon_oscillator[i] = aroon_up[i] - aroon_down[i]
+        
+        return aroon_up, aroon_down, aroon_oscillator
+    
+    @staticmethod
+    @jit(**NUMBA_CONFIG)
+    def volume_profile(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray, num_bins: int = 20) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Volume Profile - Point of Control (POC), Value Area High (VAH), Value Area Low (VAL)
+        
+        Returns:
+            Tuple of (poc, vah, val, volume_profile_balance)
+        """
+        n = len(close)
+        poc = np.empty_like(close)
+        vah = np.empty_like(close)
+        val = np.empty_like(close)
+        volume_profile_balance = np.empty_like(close)
+        
+        # Use a rolling window approach
+        window = min(100, n)  # Use last 100 periods or all if less
+        
+        for i in range(n):
+            start_idx = max(0, i - window + 1)
+            end_idx = i + 1
+            
+            if end_idx - start_idx < 10:  # Need at least 10 periods
+                poc[i] = close[i]
+                vah[i] = close[i]
+                val[i] = close[i]
+                volume_profile_balance[i] = close[i]
+                continue
+            
+            # Get price range for this window
+            price_min = np.min(low[start_idx:end_idx])
+            price_max = np.max(high[start_idx:end_idx])
+            price_range = price_max - price_min
+            
+            if price_range == 0:
+                poc[i] = close[i]
+                vah[i] = close[i]
+                val[i] = close[i]
+                volume_profile_balance[i] = close[i]
+                continue
+            
+            # Create bins
+            bin_size = price_range / num_bins
+            bin_volumes = np.zeros(num_bins)
+            bin_prices = np.zeros(num_bins)
+            
+            for j in range(start_idx, end_idx):
+                # Determine which bin this candle belongs to
+                typical_price = (high[j] + low[j] + close[j]) / 3.0
+                bin_idx = min(int((typical_price - price_min) / bin_size), num_bins - 1)
+                bin_volumes[bin_idx] += volume[j]
+                bin_prices[bin_idx] = price_min + (bin_idx + 0.5) * bin_size
+            
+            # Find POC (bin with highest volume)
+            poc_bin = np.argmax(bin_volumes)
+            poc[i] = bin_prices[poc_bin] if bin_volumes[poc_bin] > 0 else close[i]
+            
+            # Calculate Value Area (70% of volume)
+            total_volume = np.sum(bin_volumes)
+            if total_volume == 0:
+                vah[i] = close[i]
+                val[i] = close[i]
+            else:
+                target_volume = total_volume * 0.7
+                cumulative_volume = 0.0
+                vah_idx = poc_bin
+                val_idx = poc_bin
+                
+                # Expand from POC to find 70% volume area
+                left_idx = poc_bin
+                right_idx = poc_bin
+                
+                while cumulative_volume < target_volume and (left_idx > 0 or right_idx < num_bins - 1):
+                    left_vol = bin_volumes[left_idx - 1] if left_idx > 0 else 0.0
+                    right_vol = bin_volumes[right_idx + 1] if right_idx < num_bins - 1 else 0.0
+                    
+                    if left_vol > right_vol and left_idx > 0:
+                        cumulative_volume += left_vol
+                        left_idx -= 1
+                        val_idx = left_idx
+                    elif right_idx < num_bins - 1:
+                        cumulative_volume += right_vol
+                        right_idx += 1
+                        vah_idx = right_idx
+                    else:
+                        break
+                
+                vah[i] = bin_prices[vah_idx] if vah_idx < num_bins else close[i]
+                val[i] = bin_prices[val_idx] if val_idx >= 0 else close[i]
+            
+            # Volume-weighted balance point
+            total_pv = np.sum(bin_prices * bin_volumes)
+            volume_profile_balance[i] = total_pv / total_volume if total_volume > 0 else close[i]
+        
+        return poc, vah, val, volume_profile_balance
+    
+    @staticmethod
+    @jit(**NUMBA_CONFIG)
+    def ad_line(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Accumulation/Distribution Line
+        
+        Returns:
+            Tuple of (ad_line, ad_line_slope, ad_line_signal)
+            signal: 1=Accumulation, -1=Distribution, 0=Neutral
+        """
+        n = len(close)
+        ad_line = np.empty_like(close)
+        ad_line_slope = np.empty_like(close)
+        ad_line_signal = np.empty_like(close, dtype=np.int8)
+        
+        # Money Flow Multiplier
+        mfm = np.empty_like(close)
+        for i in range(n):
+            high_low_range = high[i] - low[i]
+            if high_low_range == 0:
+                mfm[i] = 0.0
+            else:
+                mfm[i] = ((close[i] - low[i]) - (high[i] - close[i])) / high_low_range
+        
+        # Money Flow Volume
+        mfv = mfm * volume.astype(np.float64)
+        
+        # A/D Line (cumulative)
+        ad_line[0] = mfv[0]
+        for i in range(1, n):
+            ad_line[i] = ad_line[i-1] + mfv[i]
+        
+        # Calculate slope (change over last 5 periods)
+        period_slope = 5
+        ad_line_slope[0] = 0.0
+        for i in range(1, n):
+            if i >= period_slope:
+                slope = (ad_line[i] - ad_line[i - period_slope]) / period_slope
+                ad_line_slope[i] = slope
+            else:
+                ad_line_slope[i] = ad_line[i] - ad_line[0]
+        
+        # Signal: 1=Accumulation (slope > 0), -1=Distribution (slope < 0), 0=Neutral
+        for i in range(n):
+            if ad_line_slope[i] > 0.01:  # Small threshold to avoid noise
+                ad_line_signal[i] = 1
+            elif ad_line_slope[i] < -0.01:
+                ad_line_signal[i] = -1
+            else:
+                ad_line_signal[i] = 0
+        
+        return ad_line, ad_line_slope, ad_line_signal
+    
+    @staticmethod
+    @jit(**NUMBA_CONFIG)
+    def cmf(high: np.ndarray, low: np.ndarray, close: np.ndarray, volume: np.ndarray, period: int = 20) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Chaikin Money Flow (CMF)
+        
+        Returns:
+            Tuple of (cmf, cmf_signal)
+            signal: 1=Buy, -1=Sell, 0=Neutral
+        """
+        n = len(close)
+        cmf = np.empty_like(close)
+        cmf_signal = np.empty_like(close, dtype=np.int8)
+        
+        cmf[:period-1] = np.nan
+        cmf_signal[:period-1] = 0
+        
+        # Money Flow Multiplier
+        mfm = np.empty_like(close)
+        for i in range(n):
+            high_low_range = high[i] - low[i]
+            if high_low_range == 0:
+                mfm[i] = 0.0
+            else:
+                mfm[i] = ((close[i] - low[i]) - (high[i] - close[i])) / high_low_range
+        
+        # Money Flow Volume
+        mfv = mfm * volume.astype(np.float64)
+        
+        # Calculate CMF
+        for i in range(period - 1, n):
+            sum_mfv = np.sum(mfv[i-period+1:i+1])
+            sum_volume = np.sum(volume[i-period+1:i+1])
+            
+            if sum_volume == 0:
+                cmf[i] = 0.0
+            else:
+                cmf[i] = sum_mfv / sum_volume
+            
+            # Signal: 1=Buy (CMF > 0.1), -1=Sell (CMF < -0.1), 0=Neutral
+            if cmf[i] > 0.1:
+                cmf_signal[i] = 1
+            elif cmf[i] < -0.1:
+                cmf_signal[i] = -1
+            else:
+                cmf_signal[i] = 0
+        
+        return cmf, cmf_signal
+    
+    @staticmethod
+    @jit(**NUMBA_CONFIG)
+    def twap(high: np.ndarray, low: np.ndarray, close: np.ndarray) -> np.ndarray:
+        """
+        Time Weighted Average Price (TWAP)
+        
+        Uses equal time weighting per period (simplified TWAP).
+        For true time-weighted calculation, actual time differences between periods would be needed.
+        
+        Args:
+            high, low, close: Price arrays
+        
+        Returns:
+            TWAP values
+        """
+        n = len(close)
+        twap_values = np.empty_like(close)
+        
+        # Calculate typical price
+        typical_price = (high + low + close) / 3.0
+        
+        # Simplified TWAP: equal time weighting per period
+        # This is equivalent to a cumulative average of typical price
+        cumulative_price = 0.0
+        
+        for i in range(n):
+            cumulative_price += typical_price[i]
+            twap_values[i] = cumulative_price / (i + 1.0)
+        
+        return twap_values
+    
+    @staticmethod
+    @jit(**NUMBA_CONFIG)
+    def volume_divergence(close: np.ndarray, volume: np.ndarray, rsi: np.ndarray, macd: np.ndarray, period: int = 14) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Volume Divergence Indicators
+        
+        Returns:
+            Tuple of (volume_price_divergence, volume_divergence_strength, volume_divergence_confirmed,
+                     rsi_volume_divergence, macd_volume_divergence, price_volume_divergence_type)
+            volume_price_divergence: 1=Bullish, 2=Bearish, 0=No divergence
+            rsi_volume_divergence: 1=Bullish, 2=Bearish, 0=No divergence
+            macd_volume_divergence: 1=Bullish, 2=Bearish, 0=No divergence
+        """
+        n = len(close)
+        volume_price_divergence = np.zeros(n, dtype=np.int8)
+        volume_divergence_strength = np.zeros(n)
+        volume_divergence_confirmed = np.zeros(n, dtype=np.int8)
+        rsi_volume_divergence = np.zeros(n, dtype=np.int8)
+        macd_volume_divergence = np.zeros(n, dtype=np.int8)
+        price_volume_divergence_type = np.zeros(n, dtype=np.int8)
+        
+        # Calculate volume moving average
+        volume_ma = np.empty_like(volume, dtype=np.float64)
+        for i in range(period - 1, n):
+            volume_ma[i] = np.mean(volume[i-period+1:i+1])
+        volume_ma[:period-1] = volume[:period-1].astype(np.float64)
+        
+        for i in range(period, n):
+            # Price-Volume Divergence
+            price_change = close[i] - close[i-period]
+            volume_change = volume[i] - volume_ma[i]
+            prev_volume_change = volume[i-1] - volume_ma[i-1] if i > period else 0
+            
+            # Bullish divergence: price down, volume up
+            if price_change < 0 and volume_change > 0 and volume[i] > volume_ma[i] * 1.2:
+                volume_price_divergence[i] = 1
+                volume_divergence_strength[i] = min(100.0, abs(volume_change / volume_ma[i]) * 100.0)
+                price_volume_divergence_type[i] = 1
+            # Bearish divergence: price up, volume down
+            elif price_change > 0 and volume_change < 0 and volume[i] < volume_ma[i] * 0.8:
+                volume_price_divergence[i] = 2
+                volume_divergence_strength[i] = min(100.0, abs(volume_change / volume_ma[i]) * 100.0)
+                price_volume_divergence_type[i] = 2
+            
+            # RSI-Volume Divergence
+            if not np.isnan(rsi[i]) and not np.isnan(rsi[i-period]):
+                rsi_change = rsi[i] - rsi[i-period]
+                if rsi_change < -10 and volume_change > 0:  # RSI oversold, volume increasing
+                    rsi_volume_divergence[i] = 1
+                elif rsi_change > 10 and volume_change < 0:  # RSI overbought, volume decreasing
+                    rsi_volume_divergence[i] = 2
+            
+            # MACD-Volume Divergence
+            if not np.isnan(macd[i]) and not np.isnan(macd[i-period]):
+                macd_change = macd[i] - macd[i-period]
+                if macd_change < 0 and volume_change > 0:  # MACD down, volume up
+                    macd_volume_divergence[i] = 1
+                elif macd_change > 0 and volume_change < 0:  # MACD up, volume down
+                    macd_volume_divergence[i] = 2
+            
+            # Confirmation: divergence persists for multiple periods
+            if i >= period + 2:
+                if volume_price_divergence[i] == volume_price_divergence[i-1] == volume_price_divergence[i-2]:
+                    volume_divergence_confirmed[i] = 1
+        
+        return volume_price_divergence, volume_divergence_strength, volume_divergence_confirmed, rsi_volume_divergence, macd_volume_divergence, price_volume_divergence_type
+    
+    @staticmethod
+    @jit(**NUMBA_CONFIG)
     def calculate_all_indicators(
         open_prices: np.ndarray,
         high_prices: np.ndarray,

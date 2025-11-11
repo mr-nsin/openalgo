@@ -398,6 +398,88 @@ class IndicatorEngine:
         indicators['di_plus'] = di_plus
         indicators['di_minus'] = di_minus
         
+        # Ichimoku Cloud (Equity, Futures, Index)
+        if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.INDEX]:
+            ichimoku_tenkan, ichimoku_kijun, ichimoku_senkou_a, ichimoku_senkou_b, ichimoku_chikou, ichimoku_cloud_top, ichimoku_cloud_bottom, ichimoku_cloud_color = NumbaIndicators.ichimoku(high, low, close)
+            indicators['ichimoku_tenkan_sen'] = ichimoku_tenkan
+            indicators['ichimoku_kijun_sen'] = ichimoku_kijun
+            indicators['ichimoku_senkou_span_a'] = ichimoku_senkou_a
+            indicators['ichimoku_senkou_span_b'] = ichimoku_senkou_b
+            indicators['ichimoku_chikou_span'] = ichimoku_chikou
+            indicators['ichimoku_cloud_top'] = ichimoku_cloud_top
+            indicators['ichimoku_cloud_bottom'] = ichimoku_cloud_bottom
+            indicators['ichimoku_cloud_color'] = ichimoku_cloud_color.astype(np.float64)
+            # Ichimoku signal: 1=Buy, 0=Sell, 2=Neutral
+            ichimoku_signal = np.zeros_like(close, dtype=np.int8)
+            for i in range(len(close)):
+                if not (np.isnan(ichimoku_cloud_top[i]) or np.isnan(ichimoku_cloud_bottom[i])):
+                    if close[i] > ichimoku_cloud_top[i]:
+                        ichimoku_signal[i] = 1
+                    elif close[i] < ichimoku_cloud_bottom[i]:
+                        ichimoku_signal[i] = 0
+                    else:
+                        ichimoku_signal[i] = 2
+            indicators['ichimoku_signal'] = ichimoku_signal.astype(np.float64)
+        
+        # Aroon Indicator (Equity, Futures, Index)
+        if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.INDEX]:
+            aroon_up, aroon_down, aroon_oscillator = NumbaIndicators.aroon(high, low, 25)
+            indicators['aroon_up'] = aroon_up
+            indicators['aroon_down'] = aroon_down
+            indicators['aroon_oscillator'] = aroon_oscillator
+            # Aroon signal: 1=Strong uptrend, -1=Strong downtrend, 0=Neutral
+            aroon_signal = np.zeros_like(close, dtype=np.int8)
+            for i in range(len(close)):
+                if not (np.isnan(aroon_up[i]) or np.isnan(aroon_down[i])):
+                    if aroon_up[i] > 70 and aroon_down[i] < 30:
+                        aroon_signal[i] = 1
+                    elif aroon_down[i] > 70 and aroon_up[i] < 30:
+                        aroon_signal[i] = -1
+                    else:
+                        aroon_signal[i] = 0
+            indicators['aroon_signal'] = aroon_signal.astype(np.float64)
+        
+        # Volume-based indicators (not for Index)
+        if instrument_type != InstrumentType.INDEX:
+            # Accumulation/Distribution Line (Equity, Futures)
+            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES]:
+                ad_line, ad_line_slope, ad_line_signal = NumbaIndicators.ad_line(high, low, close, volume)
+                indicators['ad_line'] = ad_line
+                indicators['ad_line_slope'] = ad_line_slope
+                indicators['ad_line_signal'] = ad_line_signal.astype(np.float64)
+            
+            # Chaikin Money Flow (Equity, Futures)
+            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES]:
+                cmf_20, cmf_signal = NumbaIndicators.cmf(high, low, close, volume, 20)
+                indicators['cmf_20'] = cmf_20
+                indicators['cmf_signal'] = cmf_signal.astype(np.float64)
+            
+            # Volume Profile (Equity, Futures, Options)
+            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                volume_profile_poc, volume_profile_vah, volume_profile_val, volume_profile_balance = NumbaIndicators.volume_profile(high, low, close, volume, 20)
+                indicators['volume_profile_poc'] = volume_profile_poc
+                indicators['volume_profile_vah'] = volume_profile_vah
+                indicators['volume_profile_val'] = volume_profile_val
+                indicators['volume_profile_balance'] = volume_profile_balance
+            
+            # TWAP (Equity, Futures, Options)
+            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                twap = NumbaIndicators.twap(high, low, close)
+                indicators['twap'] = twap
+            
+            # Volume Divergence (Equity, Futures, Options)
+            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                # Get RSI and MACD for divergence calculation
+                rsi = indicators.get('rsi_14', NumbaIndicators.rsi(close, 14))
+                macd_line = indicators.get('macd_line', NumbaIndicators.macd(close, 12, 26, 9)[0])
+                volume_price_div, volume_div_strength, volume_div_confirmed, rsi_vol_div, macd_vol_div, price_vol_div_type = NumbaIndicators.volume_divergence(close, volume, rsi, macd_line, 14)
+                indicators['volume_price_divergence'] = volume_price_div.astype(np.float64)
+                indicators['volume_divergence_strength'] = volume_div_strength
+                indicators['volume_divergence_confirmed'] = volume_div_confirmed.astype(np.float64)
+                indicators['rsi_volume_divergence'] = rsi_vol_div.astype(np.float64)
+                indicators['macd_volume_divergence'] = macd_vol_div.astype(np.float64)
+                indicators['price_volume_divergence_type'] = price_vol_div_type.astype(np.float64)
+        
         return indicators
     
     async def _calculate_options_greeks(
