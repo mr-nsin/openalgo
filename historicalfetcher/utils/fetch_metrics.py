@@ -14,11 +14,13 @@ from pathlib import Path
 from loguru import logger
 
 try:
-    from historicalfetcher.models.data_models import SymbolInfo, TimeFrame
+    from historicalfetcher.models.data_models import SymbolInfo
+    from historicalfetcher.config.openalgo_settings import TimeFrame
     from historicalfetcher.notifications.email_notifier import EmailNotifier
     from historicalfetcher.notifications.telegram_notifier import TelegramNotifier
 except ImportError:
-    from ..models.data_models import SymbolInfo, TimeFrame
+    from ..models.data_models import SymbolInfo
+    from ..config.openalgo_settings import TimeFrame
     from ..notifications.email_notifier import EmailNotifier
     from ..notifications.telegram_notifier import TelegramNotifier
 

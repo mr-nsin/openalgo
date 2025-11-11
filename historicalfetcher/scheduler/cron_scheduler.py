@@ -214,7 +214,7 @@ class HistoricalDataScheduler:
         
         try:
             # Import here to avoid circular imports
-            from openalgo_main import OpenAlgoHistoricalDataFetcher
+            from historicalfetcher.openalgo_main import OpenAlgoHistoricalDataFetcher
             
             # Create fetcher with default settings
             fetcher = OpenAlgoHistoricalDataFetcher()
@@ -243,7 +243,7 @@ class HistoricalDataScheduler:
         logger.info("🚀 Starting scheduled weekend full sync")
         
         try:
-            from openalgo_main import OpenAlgoHistoricalDataFetcher
+            from historicalfetcher.openalgo_main import OpenAlgoHistoricalDataFetcher
             
             # Create fetcher with extended settings for full sync
             fetcher = OpenAlgoHistoricalDataFetcher()
@@ -278,7 +278,7 @@ class HistoricalDataScheduler:
         logger.info("🔄 Starting intraday historical data update")
         
         try:
-            from openalgo_main import OpenAlgoHistoricalDataFetcher
+            from historicalfetcher.openalgo_main import OpenAlgoHistoricalDataFetcher
             
             # Create fetcher with minimal settings for intraday
             fetcher = OpenAlgoHistoricalDataFetcher()
@@ -333,7 +333,7 @@ class HistoricalDataScheduler:
         logger.info(f"🎯 Starting custom historical data fetch: {config}")
         
         try:
-            from openalgo_main import OpenAlgoHistoricalDataFetcher
+            from historicalfetcher.openalgo_main import OpenAlgoHistoricalDataFetcher
             
             fetcher = OpenAlgoHistoricalDataFetcher()
             
@@ -492,7 +492,7 @@ async def run_scheduler():
     
     try:
         # Load settings
-        settings = Settings()
+        settings = OpenAlgoSettings()
         
         # Create and configure scheduler
         scheduler = HistoricalDataScheduler(settings)
