@@ -1,0 +1,20 @@
+# Strategy Builder Requirements
+# Core async and database libraries
+asyncio
+asyncpg>=0.28.0
+
+# Data processing and numerical computing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Configuration and validation
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+python-dotenv>=1.0.0
+
+# Logging
+loguru>=0.7.0
+
+# OpenAlgo dependencies (should already be installed)
+# The openalgo package should be available in the parent directory
+

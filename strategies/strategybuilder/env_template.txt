@@ -1,0 +1,149 @@
+# Strategy Builder Environment Configuration
+# This template shows the required environment variables for the strategy builder
+
+# ============================================================================
+# OPENALGO API CONFIGURATION (REQUIRED)
+# ============================================================================
+# These are the primary credentials needed to authenticate with OpenAlgo
+# The strategy builder uses OpenAlgo's API layer to fetch historical data
+
+# OpenAlgo API Key - Generated from OpenAlgo web interface
+# This key is used to authenticate with OpenAlgo and fetch historical data
+# through OpenAlgo's unified API layer
+OPENALGO_API_KEY=your_openalgo_api_key_here
+
+# OpenAlgo API Host - URL where your OpenAlgo instance is running
+OPENALGO_API_HOST=http://127.0.0.1:5000
+
+# OpenAlgo Database URL - Connection to OpenAlgo's symbol database
+# This should match your main OpenAlgo DATABASE_URL setting
+DATABASE_URL=sqlite:///db/openalgo.db
+
+# ============================================================================
+# QUESTDB CONFIGURATION (OPTIONAL - FOR FASTER DATA ACCESS)
+# ============================================================================
+# QuestDB is used to store historical data (if you're using historicalfetcher)
+# If QuestDB is available, the strategy builder will use it for faster data access
+# Otherwise, it will fall back to OpenAlgo API
+
+# QuestDB Host
+STRATEGY_QUESTDB_HOST=localhost
+# Or use the same as historicalfetcher:
+# STRATEGY_QUESTDB_HOST=${HIST_FETCHER_QUESTDB_HOST}
+
+# QuestDB Port (PostgreSQL wire protocol port, default: 8812)
+# Note: QuestDB uses port 8812 for PostgreSQL wire protocol, not 9000
+STRATEGY_QUESTDB_PORT=8812
+# Or use the same as historicalfetcher:
+# STRATEGY_QUESTDB_PORT=${HIST_FETCHER_QUESTDB_PORT}
+
+# QuestDB Username (optional)
+STRATEGY_QUESTDB_USERNAME=
+# Or use the same as historicalfetcher:
+# STRATEGY_QUESTDB_USERNAME=${HIST_FETCHER_QUESTDB_USERNAME}
+
+# QuestDB Password (optional)
+STRATEGY_QUESTDB_PASSWORD=
+# Or use the same as historicalfetcher:
+# STRATEGY_QUESTDB_PASSWORD=${HIST_FETCHER_QUESTDB_PASSWORD}
+
+# QuestDB Database name
+STRATEGY_QUESTDB_DATABASE=qdb
+# Or use the same as historicalfetcher:
+# STRATEGY_QUESTDB_DATABASE=${HIST_FETCHER_QUESTDB_DATABASE}
+
+# ============================================================================
+# DATA SOURCE CONFIGURATION
+# ============================================================================
+# Choose where to fetch historical data from:
+# - "questdb": Fetch from QuestDB (faster, requires historicalfetcher to be running)
+# - "openalgo_api": Fetch from OpenAlgo API (slower but always available)
+STRATEGY_DATA_SOURCE=questdb
+
+# ============================================================================
+# STRATEGY CONFIGURATION
+# ============================================================================
+# Strategy name to run
+# Available strategies:
+#   - mvg_avg_crossover_original: Moving Average Crossover (Original implementation)
+STRATEGY_NAME=mvg_avg_crossover_original
+
+# ============================================================================
+# BACKTEST CONFIGURATION
+# ============================================================================
+# Trading symbol (e.g., RELIANCE, TCS, INFY)
+STRATEGY_SYMBOL=RELIANCE
+
+# Exchange (e.g., NSE, BSE)
+STRATEGY_EXCHANGE=NSE
+
+# Time interval (1m, 3m, 5m, 15m, 30m, 1h, D)
+STRATEGY_INTERVAL=D
+
+# Start date (YYYY-MM-DD format)
+STRATEGY_START_DATE=2023-01-01
+
+# End date (YYYY-MM-DD format)
+STRATEGY_END_DATE=2024-01-01
+
+# Initial capital for backtest
+STRATEGY_INITIAL_CAPITAL=100000
+
+# ============================================================================
+# MOVING AVERAGE CROSSOVER STRATEGY PARAMETERS
+# ============================================================================
+# Short SMA period (default: 50)
+STRATEGY_SHORT_SMA_PERIOD=50
+
+# Mid EMA period (default: 100)
+STRATEGY_MID_EMA_PERIOD=100
+
+# Long SMA period (default: 200)
+STRATEGY_LONG_SMA_PERIOD=200
+
+# Swing lookback period for stop loss (default: 5)
+STRATEGY_SWING_LOOKBACK=5
+
+# Enable volume filter (true/false, default: true)
+STRATEGY_VOLUME_FILTER=true
+
+# Enable MACD filter (true/false, default: true)
+STRATEGY_MACD_FILTER=true
+
+# ============================================================================
+# LOGGING CONFIGURATION
+# ============================================================================
+# Log level: DEBUG, INFO, WARNING, ERROR, CRITICAL
+STRATEGY_LOG_LEVEL=INFO
+
+# Log file path
+STRATEGY_LOG_FILE_PATH=logs/strategy_builder.log
+
+# ============================================================================
+# IMPORTANT NOTES:
+# ============================================================================
+# 
+# 1. OPENALGO_API_KEY is the ONLY broker credential needed
+#    - This key authenticates with OpenAlgo
+#    - OpenAlgo handles the actual broker authentication internally
+#    - DO NOT add BROKER_API_KEY or BROKER_API_SECRET here
+# 
+# 2. The strategy builder works through OpenAlgo's API layer:
+#    - Strategy Builder -> OpenAlgo API -> Broker API -> Historical Data
+#    - This ensures consistent authentication and error handling
+# 
+# 3. Make sure your OpenAlgo instance is running and properly configured
+#    with your broker credentials before running the strategy builder
+# 
+# 4. Generate your OPENALGO_API_KEY from the OpenAlgo web interface:
+#    - Login to OpenAlgo -> Settings -> API Keys -> Generate New Key
+#
+# 5. If you're using QuestDB (via historicalfetcher):
+#    - Make sure historicalfetcher has been run to populate QuestDB
+#    - The strategy builder will automatically fall back to OpenAlgo API
+#      if QuestDB is not available
+#
+# 6. Copy this template to .env and fill in your actual values:
+#    cp env_template.txt .env
+#    nano .env
+
