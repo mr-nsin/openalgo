@@ -41,6 +41,7 @@ from blueprints.python_strategy import python_strategy_bp  # Import the python s
 from blueprints.telegram import telegram_bp  # Import the telegram blueprint
 from blueprints.security import security_bp  # Import the security blueprint
 from blueprints.sandbox import sandbox_bp  # Import the sandbox blueprint
+from blueprints.playground import playground_bp  # Import the API playground blueprint
 from services.telegram_bot_service import telegram_bot_service
 from database.telegram_db import get_bot_config
 
@@ -182,6 +183,7 @@ def create_app():
     app.register_blueprint(telegram_bp)  # Register Telegram blueprint
     app.register_blueprint(security_bp)  # Register Security blueprint
     app.register_blueprint(sandbox_bp)  # Register Sandbox blueprint
+    app.register_blueprint(playground_bp)  # Register API playground blueprint
 
 
     # Exempt webhook endpoints from CSRF protection after app initialization
@@ -269,6 +271,28 @@ def create_app():
             session.clear()
             # Don't redirect here, let individual routes handle it
     
+    @app.errorhandler(400)
+    def csrf_error(error):
+        """Custom handler for CSRF errors (400 Bad Request)"""
+        from flask import request, jsonify, flash, redirect, url_for
+        error_description = str(error)
+
+        logger.warning(f"CSRF Error on {request.path}: {error_description}")
+
+        # Check if it's a CSRF error
+        if 'CSRF' in error_description or 'csrf' in error_description.lower():
+            if request.is_json or request.path.startswith('/api'):
+                return jsonify({
+                    'error': 'CSRF validation failed',
+                    'message': 'Security token expired or invalid. Please refresh the page and try again.'
+                }), 400
+            else:
+                flash('Security token expired. Please try again.', 'error')
+                return redirect(request.referrer or url_for('auth.login'))
+
+        # For other 400 errors
+        return str(error), 400
+
     @app.errorhandler(404)
     def not_found_error(error):
         from flask import request
@@ -342,6 +366,10 @@ def setup_environment(app):
     # Conditionally setup ngrok in development environment
     if os.getenv('NGROK_ALLOW') == 'TRUE':
         from pyngrok import ngrok
+        # Disconnect only the 'flask' tunnel if it exists (to avoid "tunnel already exists" error)
+        for tunnel in ngrok.get_tunnels():
+            if tunnel.name == 'flask':
+                ngrok.disconnect(tunnel.public_url)
         public_url = ngrok.connect(name='flask').public_url  # Assuming Flask runs on the default port 5000
         logger.info(f"ngrok URL: {public_url}")
 
