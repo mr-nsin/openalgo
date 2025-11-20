@@ -72,7 +72,15 @@ STRATEGY_NAME=mvg_avg_crossover_original
 # BACKTEST CONFIGURATION
 # ============================================================================
 # Trading symbol (e.g., RELIANCE, TCS, INFY)
+# For single symbol, use:
 STRATEGY_SYMBOL=RELIANCE
+
+# For multiple symbols, use comma-separated list (either option works):
+# Option 1: Use STRATEGY_SYMBOLS (recommended for multiple symbols)
+STRATEGY_SYMBOLS=RELIANCE,TCS,INFY,HDFCBANK,ICICIBANK
+
+# Option 2: Put comma-separated values in STRATEGY_SYMBOL (also works)
+# STRATEGY_SYMBOL=RELIANCE,TCS,INFY
 
 # Exchange (e.g., NSE, BSE)
 STRATEGY_EXCHANGE=NSE

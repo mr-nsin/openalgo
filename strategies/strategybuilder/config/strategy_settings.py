@@ -6,13 +6,54 @@ and uses the same database and authentication mechanisms.
 """
 
 import os
+import sys
+from pathlib import Path
 from typing import Optional
 from enum import Enum
+
+# Load environment variables from .env file BEFORE creating settings
+# This ensures Pydantic can read the values correctly
+try:
+    from dotenv import load_dotenv
+    # Try to load from strategybuilder directory first, then from OpenAlgo root
+    # __file__ is at: strategies/strategybuilder/config/strategy_settings.py
+    _config_dir = Path(__file__).parent  # strategies/strategybuilder/config/
+    _strategybuilder_dir = _config_dir.parent  # strategies/strategybuilder/
+    _root_dir = _strategybuilder_dir.parent.parent  # OpenAlgo root (go up: strategies -> openalgo)
+    
+    env_paths = [
+        _strategybuilder_dir / '.env',  # strategies/strategybuilder/.env (preferred)
+        _root_dir / '.env'              # Root .env (OpenAlgo main .env) as fallback
+    ]
+    
+    env_loaded = False
+    for env_path in env_paths:
+        if env_path.exists():
+            load_dotenv(dotenv_path=str(env_path), override=False)
+            env_loaded = True
+            # Log which .env file was loaded (for debugging)
+            if os.getenv('DEBUG', '').lower() == 'true':
+                print(f"Loaded .env from: {env_path}", file=sys.stderr)
+            break
+    
+    if not env_loaded:
+        # Try current working directory as fallback
+        cwd_env = Path.cwd() / '.env'
+        if cwd_env.exists():
+            load_dotenv(dotenv_path=str(cwd_env), override=False)
+            env_loaded = True
+    
+except ImportError:
+    # python-dotenv not installed, will use system environment variables
+    pass
+except Exception as e:
+    # Log but don't fail if .env loading has issues
+    print(f"Warning: Could not load .env file: {e}", file=sys.stderr)
 
 try:
     # Pydantic v2+ (BaseSettings moved to pydantic-settings)
     from pydantic_settings import BaseSettings
-    from pydantic import Field
+    from pydantic import Field, ConfigDict
     PYDANTIC_V2 = True
 except ImportError:
     try:
@@ -45,6 +86,23 @@ class DataSource(str, Enum):
 
 class StrategySettings(BaseSettings):
     """Configuration settings for strategy builder"""
+    
+    # Configure Pydantic to ignore extra fields
+    # Note: env_file is set to None because we load .env manually above
+    # This ensures we have control over which .env file is loaded
+    if PYDANTIC_V2:
+        model_config = ConfigDict(
+            env_file=None,  # We load .env manually above, so don't let Pydantic auto-load
+            env_file_encoding='utf-8',
+            case_sensitive=False,
+            extra='ignore'  # Ignore extra fields from .env that aren't in this model
+        )
+    else:
+        class Config:
+            env_file = None  # We load .env manually above, so don't let Pydantic auto-load
+            env_file_encoding = 'utf-8'
+            case_sensitive = False
+            extra = 'ignore'  # Ignore extra fields from .env that aren't in this model
     
     # OpenAlgo Integration - Use OpenAlgo's API system
     openalgo_database_url: str = Field(
@@ -96,6 +154,9 @@ class StrategySettings(BaseSettings):
     symbol: str = Field(
         default_factory=lambda: os.getenv('STRATEGY_SYMBOL', 'RELIANCE')
     )
+    symbols: str = Field(
+        default_factory=lambda: os.getenv('STRATEGY_SYMBOLS', '')
+    )
     exchange: str = Field(
         default_factory=lambda: os.getenv('STRATEGY_EXCHANGE', 'NSE')
     )
@@ -131,9 +192,4 @@ class StrategySettings(BaseSettings):
     macd_filter: bool = Field(
         default_factory=lambda: os.getenv('STRATEGY_MACD_FILTER', 'true').lower() == 'true'
     )
-    
-    class Config:
-        env_file = '.env'
-        env_file_encoding = 'utf-8'
-        case_sensitive = False
 

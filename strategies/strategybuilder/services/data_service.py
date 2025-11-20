@@ -7,11 +7,21 @@ Fetches historical data from QuestDB or OpenAlgo API
 import pandas as pd
 import asyncio
 import asyncpg
+import sys
+from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime, date
 from loguru import logger
 
-from ..config.strategy_settings import StrategySettings, TimeFrame, DataSource
+# Handle imports - try relative first, then absolute
+try:
+    from ..config.strategy_settings import StrategySettings, TimeFrame, DataSource
+except ImportError:
+    # Fall back to absolute import if relative doesn't work
+    current_dir = Path(__file__).parent.parent
+    if str(current_dir) not in sys.path:
+        sys.path.insert(0, str(current_dir))
+    from config.strategy_settings import StrategySettings, TimeFrame, DataSource
 
 
 class DataService:
@@ -67,11 +77,24 @@ class DataService:
         """Initialize OpenAlgo API client"""
         try:
             from openalgo import api
+            
+            # Validate API key is present
+            if not self.settings.openalgo_api_key or self.settings.openalgo_api_key.strip() == '':
+                raise ValueError(
+                    "OPENALGO_API_KEY is not set or is empty. "
+                    "Please set it in your .env file (strategies/strategybuilder/.env)"
+                )
+            
+            # Log API key info (masked for security)
+            api_key_preview = self.settings.openalgo_api_key[:8] + "..." if len(self.settings.openalgo_api_key) > 8 else "***"
+            logger.info(f"Initializing OpenAlgo API client at {self.settings.openalgo_api_host}")
+            logger.debug(f"Using API key: {api_key_preview}")
+            
             self._openalgo_client = api(
                 api_key=self.settings.openalgo_api_key,
                 host=self.settings.openalgo_api_host
             )
-            logger.info(f"Initialized OpenAlgo API client at {self.settings.openalgo_api_host}")
+            logger.info(f"Initialized OpenAlgo API client successfully")
         except Exception as e:
             logger.error(f"Failed to initialize OpenAlgo API client: {e}")
             raise
@@ -186,7 +209,7 @@ class DataService:
             
             # Run in thread pool to avoid blocking
             loop = asyncio.get_event_loop()
-            df = await loop.run_in_executor(
+            response = await loop.run_in_executor(
                 None,
                 lambda: self._openalgo_client.history(
                     symbol=symbol,
@@ -197,6 +220,25 @@ class DataService:
                 )
             )
             
+            # Check if response is an error dict instead of DataFrame
+            if isinstance(response, dict):
+                if response.get('status') == 'error' or 'error' in response:
+                    error_msg = response.get('message', response.get('error', 'Unknown error'))
+                    error_code = response.get('code', 'N/A')
+                    raise ValueError(
+                        f"OpenAlgo API Error ({error_code}): {error_msg}\n"
+                        f"Please check your OPENALGO_API_KEY in .env file"
+                    )
+                else:
+                    raise ValueError(f"Unexpected response format from OpenAlgo API: {response}")
+            
+            # Check if response is a DataFrame
+            if not isinstance(response, pd.DataFrame):
+                raise ValueError(f"Expected DataFrame but got {type(response)}: {response}")
+            
+            df = response
+            
+            # Check if DataFrame is empty
             if df is None or df.empty:
                 raise ValueError(f"No data returned for {symbol} {exchange}")
             
