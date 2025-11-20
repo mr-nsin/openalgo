@@ -384,7 +384,7 @@ if __name__ == "__main__":
     
     # List of instruments to subscribe to
     instruments_list = [
-        {"exchange": "MCX", "symbol": "GOLDPETAL30MAY25FUT"}
+        {"exchange": "NFO", "symbol": "NIFTY25NOV2526000CE"}
     ]
     
     print("\n===== TESTING DEPTH SUBSCRIPTION =====")

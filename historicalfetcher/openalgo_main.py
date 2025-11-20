@@ -171,8 +171,8 @@ class OpenAlgoHistoricalDataFetcher:
                 )
             
             # Process each instrument type in priority order
-            # Priority: INDEX (especially NIFTY, BANKNIFTY, SENSEX) first, then EQ, FUT, options
-            priority_order = ['INDEX', 'EQ', 'FUT', 'CE', 'PE']
+            # Priority: INDEX first, then CE, PE, FUT, EQ
+            priority_order = ['INDEX', 'CE', 'PE', 'FUT', 'EQ']
             
             # Process INDEX symbols first (already sorted by symbol manager with priority indices first)
             if 'INDEX' in symbols_by_type and symbols_by_type['INDEX']:
