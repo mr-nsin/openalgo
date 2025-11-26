@@ -90,11 +90,28 @@ class TableNamingStrategy:
         clean_underlying = TableNamingStrategy.sanitize_symbol(underlying)
         clean_exchange = exchange.lower()
         # Convert expiry date to compact format (YYMMDD)
+        expiry_compact = "000000"
         try:
+            # Try DD-MMM-YY format first (e.g., "25-Nov-25")
             expiry_date = datetime.strptime(expiry, "%d-%b-%y")
             expiry_compact = expiry_date.strftime("%y%m%d")
         except:
-            expiry_compact = "000000"
+            try:
+                # Try DDMMMYY format (e.g., "25NOV25")
+                if len(expiry) == 7 and expiry[2:5].isalpha():
+                    day = expiry[:2]
+                    month_str = expiry[2:5].upper()
+                    year = expiry[5:7]
+                    month_map = {
+                        'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                        'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+                    }
+                    month = month_map.get(month_str, 1)
+                    expiry_date = datetime(int('20' + year), month, int(day))
+                    expiry_compact = expiry_date.strftime("%y%m%d")
+            except Exception as e:
+                logger.warning(f"Could not parse expiry '{expiry}', using default: {e}")
+                expiry_compact = "000000"
         
         return f"opt_{clean_exchange}_{clean_underlying}_{expiry_compact}"
     
@@ -214,6 +231,35 @@ class DynamicTableManager:
         
         return table_name
     
+    def _extract_underlying_from_symbol(self, symbol: str, instrument_type: str) -> str:
+        """
+        Extract underlying symbol from option/future symbol.
+        
+        Format examples:
+        - Option: "360ONE25NOV251000CE" -> "360ONE"
+        - Option: "NIFTY28NOV2424000CE" -> "NIFTY"
+        - Future: "NIFTY28NOV24FUT" -> "NIFTY"
+        - Future: "RELIANCE31JAN25FUT" -> "RELIANCE"
+        """
+        import re
+        
+        if instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            # Pattern: SYMBOL + DD + MMM + YY + STRIKE + CE/PE
+            # Match: ([A-Z]+)(\d{2})([A-Z]{3})(\d{2})([\d.]+)(CE|PE)
+            match = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2}[\d.]+)(CE|PE)$", symbol.upper())
+            if match:
+                return match.group(1)
+        
+        elif instrument_type == InstrumentType.FUTURES:
+            # Pattern: SYMBOL + DD + MMM + YY + FUT
+            # Match: ([A-Z]+)(\d{2}[A-Z]{3}\d{2})FUT
+            match = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2})FUT$", symbol.upper())
+            if match:
+                return match.group(1)
+        
+        # If no pattern matches, return symbol as-is (fallback)
+        return symbol
+    
     def _generate_table_name(self, symbol_info: SymbolInfo) -> str:
         """Generate appropriate table name based on instrument type"""
         
@@ -223,16 +269,43 @@ class DynamicTableManager:
             )
         
         elif symbol_info.instrument_type == InstrumentType.FUTURES:
-            underlying = symbol_info.extract_underlying_symbol()
+            underlying = self._extract_underlying_from_symbol(
+                symbol_info.symbol, symbol_info.instrument_type
+            )
             return TableNamingStrategy.get_futures_table_name(
                 underlying, symbol_info.exchange
             )
         
         elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
-            underlying = symbol_info.extract_underlying_symbol()
-            expiry = symbol_info.expiry or "000000"
+            underlying = self._extract_underlying_from_symbol(
+                symbol_info.symbol, symbol_info.instrument_type
+            )
+            # Extract expiry from symbol if not provided
+            expiry = symbol_info.expiry
+            if not expiry:
+                # Try to extract from symbol: SYMBOL + DDMMMYY + STRIKE + CE/PE
+                import re
+                match = re.match(r"^[A-Z]+(\d{2}[A-Z]{3}\d{2})[\d.]+(CE|PE)$", symbol_info.symbol.upper())
+                if match:
+                    expiry_str = match.group(1)  # e.g., "25NOV25"
+                    # Convert to DD-MMM-YY format for table naming
+                    try:
+                        day = expiry_str[:2]
+                        month_map = {
+                            'JAN': 'Jan', 'FEB': 'Feb', 'MAR': 'Mar', 'APR': 'Apr',
+                            'MAY': 'May', 'JUN': 'Jun', 'JUL': 'Jul', 'AUG': 'Aug',
+                            'SEP': 'Sep', 'OCT': 'Oct', 'NOV': 'Nov', 'DEC': 'Dec'
+                        }
+                        month = expiry_str[2:5]
+                        year = expiry_str[5:7]
+                        expiry = f"{day}-{month_map.get(month, 'Jan')}-{year}"
+                    except:
+                        expiry = "000000"
+                else:
+                    expiry = "000000"
+            
             return TableNamingStrategy.get_options_table_name(
-                underlying, symbol_info.exchange, expiry
+                underlying, symbol_info.exchange, expiry or "000000"
             )
         
         elif symbol_info.instrument_type == InstrumentType.INDEX:

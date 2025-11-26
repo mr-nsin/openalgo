@@ -34,7 +34,49 @@ class InstrumentType(str, Enum):
     PUT_OPTION = "PE"
     INDEX = "INDEX"
 from historicalfetcher.indicators.numba_indicators import NumbaIndicators
-from historicalfetcher.indicators.options_greeks import OptionsGreeksCalculator
+
+# Initialize IV availability flag
+_IV_AVAILABLE = False
+
+try:
+    from historicalfetcher.indicators.options_greeks import (
+        OptionsGreeksCalculator, 
+        ImpliedVolatilityCalculator, 
+        AdvancedGreeks,
+        _calculate_all_greeks  # Standalone function for JIT compatibility
+    )
+    _CALCULATE_ALL_GREEKS_AVAILABLE = True
+    # Test if ImpliedVolatilityCalculator is actually callable (JIT compilation might have failed)
+    try:
+        # Try a simple test call to see if it's compiled (this will trigger JIT compilation)
+        _test_iv = ImpliedVolatilityCalculator.implied_volatility_newton_raphson(
+            100.0, 100.0, 0.1, 0.06, True, 0.0
+        )
+        _IV_AVAILABLE = True
+        logger.debug("ImpliedVolatilityCalculator is available and working")
+    except Exception as e:
+        logger.warning(f"ImpliedVolatilityCalculator JIT compilation failed: {e}, will use fallback IV")
+        _IV_AVAILABLE = False
+        # Create fallback function
+        class ImpliedVolatilityCalculator:
+            @staticmethod
+            def implied_volatility_newton_raphson(*args, **kwargs):
+                return 0.2  # Default IV
+except ImportError as e:
+    logger.error(f"Failed to import options Greeks calculators: {e}")
+    _IV_AVAILABLE = False
+    _CALCULATE_ALL_GREEKS_AVAILABLE = False
+    # Create dummy classes to prevent errors
+    class OptionsGreeksCalculator:
+        pass
+    class ImpliedVolatilityCalculator:
+        @staticmethod
+        def implied_volatility_newton_raphson(*args, **kwargs):
+            return 0.2  # Default IV
+    class AdvancedGreeks:
+        pass
+    def _calculate_all_greeks(*args, **kwargs):
+        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 from historicalfetcher.models.data_models import TimeFrameCode, OptionTypeCode, IndicatorResult, CalculationConfig
 
 # Logger is imported from loguru above
@@ -127,6 +169,7 @@ class IndicatorEngine:
                     low=candle.low,
                     close=candle.close,
                     volume=candle.volume,
+                    oi=candle.oi,
                     indicators=candle_indicators,
                     derived_metrics=candle_derived,
                     market_depth=market_depth_data
@@ -177,6 +220,12 @@ class IndicatorEngine:
                 symbol_info, candles, spot_price, risk_free_rate, dividend_yield
             )
             
+            # Log Greeks calculation status
+            if greeks_data:
+                logger.debug(f"Greeks calculated for {symbol_info.symbol}: {list(greeks_data.keys())}")
+            else:
+                logger.warning(f"No Greeks calculated for {symbol_info.symbol} - check calculate_greeks config")
+            
             # Calculate derived metrics
             derived_metrics = self._calculate_derived_metrics(ohlcv_data, indicators)
             
@@ -212,6 +261,7 @@ class IndicatorEngine:
                     low=candle.low,
                     close=candle.close,
                     volume=candle.volume,
+                    oi=candle.oi,
                     indicators=candle_indicators,
                     greeks=candle_greeks,
                     derived_metrics=candle_derived,
@@ -291,6 +341,7 @@ class IndicatorEngine:
                     low=candle.low,
                     close=candle.close,
                     volume=candle.volume,
+                    oi=candle.oi,
                     indicators=candle_indicators,
                     derived_metrics=candle_derived,
                     market_depth=market_depth_data
@@ -371,8 +422,19 @@ class IndicatorEngine:
             indicators['bb_upper'] = bb_upper
             indicators['bb_middle'] = bb_middle
             indicators['bb_lower'] = bb_lower
-            indicators['bb_width'] = (bb_upper - bb_lower) / bb_middle * 100
-            indicators['bb_percent'] = (close - bb_lower) / (bb_upper - bb_lower) * 100
+            # Bollinger Bands width - avoid division by zero
+            indicators['bb_width'] = np.where(
+                bb_middle != 0,
+                (bb_upper - bb_lower) / bb_middle * 100,
+                0.0
+            )
+            # Bollinger Bands percent - avoid division by zero
+            bb_range = bb_upper - bb_lower
+            indicators['bb_percent'] = np.where(
+                bb_range != 0,
+                (close - bb_lower) / bb_range * 100,
+                0.0
+            )
         
         if self.config.calculate_volume_indicators and instrument_type != InstrumentType.INDEX:
             # Volume indicators (not applicable to indices)
@@ -493,6 +555,7 @@ class IndicatorEngine:
         """Calculate options Greeks for all candles"""
         
         if not self.config.calculate_greeks:
+            logger.debug(f"Greeks calculation disabled for {symbol_info.symbol} (calculate_greeks=False)")
             return {}
         
         n = len(candles)
@@ -547,19 +610,41 @@ class IndicatorEngine:
                 continue
             
             # Calculate implied volatility if enabled
+            # Initialize iv to default value first (always available for Greeks calculation)
+            iv = 0.2  # Default 20% volatility
+            
             if self.config.calculate_iv:
-                iv = ImpliedVolatilityCalculator.implied_volatility_newton_raphson(
-                    candle.close, spot_price, strike, time_to_expiry, risk_free_rate, is_call, dividend_yield
-                )
-                greeks['implied_volatility'][i] = iv
+                # Check if IV calculator is available and working
+                if _IV_AVAILABLE:
+                    try:
+                        iv = ImpliedVolatilityCalculator.implied_volatility_newton_raphson(
+                            candle.close, spot_price, strike, time_to_expiry, risk_free_rate, is_call, dividend_yield
+                        )
+                        greeks['implied_volatility'][i] = iv
+                    except Exception as e:
+                        logger.warning(f"Error calculating IV for {symbol_info.symbol}: {e}, using default")
+                        iv = 0.2
+                        greeks['implied_volatility'][i] = iv
+                else:
+                    # IV calculator not available, use default
+                    iv = 0.2
+                    greeks['implied_volatility'][i] = iv
             else:
+                # IV calculation disabled, use default
                 iv = 0.2  # Default 20% volatility
             
-            # Calculate all Greeks
-            (option_price, delta, gamma, theta, vega, rho, lambda_val,
-             intrinsic_val, time_val, moneyness_val, prob_itm) = OptionsGreeksCalculator.calculate_all_greeks(
-                spot_price, strike, time_to_expiry, risk_free_rate, iv, is_call, dividend_yield
-            )
+            # Calculate all Greeks using standalone function (avoids Numba class method issues)
+            if _CALCULATE_ALL_GREEKS_AVAILABLE:
+                (option_price, delta, gamma, theta, vega, rho, lambda_val,
+                 intrinsic_val, time_val, moneyness_val, prob_itm) = _calculate_all_greeks(
+                    spot_price, strike, time_to_expiry, risk_free_rate, iv, is_call, dividend_yield
+                )
+            else:
+                # Fallback to class method if standalone function not available
+                (option_price, delta, gamma, theta, vega, rho, lambda_val,
+                 intrinsic_val, time_val, moneyness_val, prob_itm) = OptionsGreeksCalculator.calculate_all_greeks(
+                    spot_price, strike, time_to_expiry, risk_free_rate, iv, is_call, dividend_yield
+                )
             
             greeks['delta'][i] = delta
             greeks['gamma'][i] = gamma
@@ -598,8 +683,12 @@ class IndicatorEngine:
         derived['price_change'] = price_changes
         derived['price_change_pct'] = pct_changes
         
-        # High-low metrics
-        derived['high_low_pct'] = ((high - low) / close) * 100
+        # High-low metrics - avoid division by zero
+        derived['high_low_pct'] = np.where(
+            close != 0,
+            ((high - low) / close) * 100,
+            0.0
+        )
         
         # Pivot points (calculated for each day)
         derived['pivot_point'] = np.empty_like(close)
@@ -661,10 +750,15 @@ class IndicatorEngine:
         metrics['volume_change_pct'] = np.concatenate([[0], volume_change_pct])
         
         # Basis calculations (if spot price available)
-        if spot_price is not None:
+        if spot_price is not None and spot_price != 0:
             metrics['spot_price'] = np.full_like(close, spot_price)
             metrics['basis'] = close - spot_price
             metrics['basis_pct'] = ((close - spot_price) / spot_price) * 100
+        elif spot_price is not None:
+            # Spot price is zero, set basis to zero
+            metrics['spot_price'] = np.full_like(close, spot_price)
+            metrics['basis'] = close - spot_price
+            metrics['basis_pct'] = np.zeros_like(close)
         
         return metrics
     
@@ -785,8 +879,19 @@ class IndicatorEngine:
                 indicators['bb_upper'] = bb_upper
                 indicators['bb_middle'] = bb_middle
                 indicators['bb_lower'] = bb_lower
-                indicators['bb_width'] = (bb_upper - bb_lower) / bb_middle * 100
-                indicators['bb_percent'] = (closes - bb_lower) / (bb_upper - bb_lower) * 100
+                # Bollinger Bands width - avoid division by zero
+                indicators['bb_width'] = np.where(
+                    bb_middle != 0,
+                    (bb_upper - bb_lower) / bb_middle * 100,
+                    0.0
+                )
+                # Bollinger Bands percent - avoid division by zero
+                bb_range = bb_upper - bb_lower
+                indicators['bb_percent'] = np.where(
+                    bb_range != 0,
+                    (closes - bb_lower) / bb_range * 100,
+                    0.0
+                )
             
             # Stochastic
             if self.config.enable_stochastic:
@@ -837,11 +942,23 @@ class IndicatorEngine:
             # Price changes
             price_changes = np.diff(closes, prepend=closes[0])
             derived['price_change'] = price_changes
-            derived['price_change_pct'] = (price_changes / np.roll(closes, 1)) * 100
+            
+            # Price change percentage - avoid division by zero
+            prev_closes = np.roll(closes, 1)
+            prev_closes[0] = closes[0]  # First value uses current close
+            derived['price_change_pct'] = np.where(
+                prev_closes != 0,
+                (price_changes / prev_closes) * 100,
+                0.0
+            )
             derived['price_change_pct'][0] = 0.0  # First value is 0
             
-            # High-Low percentage
-            derived['high_low_pct'] = ((highs - lows) / closes) * 100
+            # High-Low percentage - avoid division by zero
+            derived['high_low_pct'] = np.where(
+                closes != 0,
+                ((highs - lows) / closes) * 100,
+                0.0
+            )
             
         except Exception as e:
             logger.error(f"Error calculating derived metrics: {e}")
@@ -857,8 +974,17 @@ class IndicatorEngine:
         cumulative_pv = np.cumsum(typical_price * volume)
         cumulative_volume = np.cumsum(volume)
         
-        # Avoid division by zero
-        vwap = np.where(cumulative_volume != 0, cumulative_pv / cumulative_volume, typical_price)
+        # Avoid division by zero and NaN warnings
+        # Use np.divide with where parameter to suppress warnings
+        with np.errstate(divide='ignore', invalid='ignore'):
+            vwap = np.divide(
+                cumulative_pv, 
+                cumulative_volume, 
+                out=np.full_like(cumulative_pv, np.nan), 
+                where=(cumulative_volume != 0)
+            )
+            # Fill NaN values with typical_price
+            vwap = np.where(np.isnan(vwap), typical_price, vwap)
         
         return vwap
     
@@ -1070,7 +1196,12 @@ class BatchIndicatorProcessor:
                     market_depth_data.get(symbol_info.symbol) if market_depth_data else None
                 )
             elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
-                underlying = symbol_info.extract_underlying_symbol()
+                # Extract underlying from option symbol
+                import re
+                underlying = symbol_info.symbol
+                match = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2}[\d.]+)(CE|PE)$", symbol_info.symbol.upper())
+                if match:
+                    underlying = match.group(1)
                 spot_price = spot_prices.get(underlying) if spot_prices else 0.0
                 task = self.engine.calculate_options_indicators(
                     symbol_info, candles, timeframe, spot_price,
@@ -1118,7 +1249,11 @@ def process_market_depth_data(bid_ask_data: Dict) -> Dict[str, float]:
     if processed['bid_1'] > 0 and processed['ask_1'] > 0:
         processed['bid_ask_spread'] = processed['ask_1'] - processed['bid_1']
         processed['mid_price'] = (processed['bid_1'] + processed['ask_1']) / 2.0
-        processed['bid_ask_spread_pct'] = (processed['bid_ask_spread'] / processed['mid_price']) * 100
+        # Bid-ask spread percentage - avoid division by zero
+        if processed['mid_price'] != 0:
+            processed['bid_ask_spread_pct'] = (processed['bid_ask_spread'] / processed['mid_price']) * 100
+        else:
+            processed['bid_ask_spread_pct'] = 0.0
     else:
         processed['bid_ask_spread'] = 0.0
         processed['mid_price'] = 0.0
@@ -1128,7 +1263,7 @@ def process_market_depth_data(bid_ask_data: Dict) -> Dict[str, float]:
     processed['total_bid_qty'] = sum(processed[f'bid_qty_{i}'] for i in range(1, 6))
     processed['total_ask_qty'] = sum(processed[f'ask_qty_{i}'] for i in range(1, 6))
     
-    # Bid/ask ratio
+    # Bid/ask ratio - avoid division by zero
     if processed['total_ask_qty'] > 0:
         processed['bid_ask_ratio'] = processed['total_bid_qty'] / processed['total_ask_qty']
     else:

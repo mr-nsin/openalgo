@@ -4,7 +4,7 @@ Data models for OpenAlgo Historical Data Fetcher
 This module contains shared data models to avoid circular imports.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Dict, List
 from enum import IntEnum
@@ -117,15 +117,16 @@ class IndicatorResult:
     timeframe: str  # Changed to string for SYMBOL storage ('1m', '5m', 'D', etc.)
     timestamp: datetime
     
-    # Basic OHLCV
+    # Basic OHLCV + OI
     open: float
     high: float
     low: float
     close: float
     volume: int
+    oi: int = 0  # Open Interest (0 for equity/index, populated for futures/options)
     
     # Technical Indicators
-    indicators: Dict[str, float]
+    indicators: Dict[str, float] = field(default_factory=dict)
     
     # Options Greeks (if applicable)
     greeks: Optional[Dict[str, float]] = None

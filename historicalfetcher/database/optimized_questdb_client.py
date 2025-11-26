@@ -62,7 +62,10 @@ class OptimizedQuestDBClient:
         # Indicator calculation engine (lazy loaded to avoid circular imports)
         self.indicator_engine = None
         self._indicator_config = CalculationConfig(
-            enable_greeks=True,
+            enable_greeks=True,              # Enable Greeks calculator initialization
+            calculate_greeks=True,           # Actually calculate Greeks for options
+            calculate_iv=True,               # Calculate implied volatility
+            calculate_advanced_greeks=True,  # Calculate advanced Greeks (charm, vanna, volga)
             enable_parallel_processing=True,
             max_workers=4
         )
@@ -228,6 +231,7 @@ class OptimizedQuestDBClient:
                         low=candle.low,
                         close=candle.close,
                         volume=candle.volume,
+                        oi=candle.oi,
                         indicators={},
                         greeks={},
                         market_depth={},
@@ -325,9 +329,9 @@ class OptimizedQuestDBClient:
             elif symbol_info.instrument_type == InstrumentType.FUTURES:
                 return await self._insert_enhanced_futures_data(table_name, indicator_results)
             elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
-                return await self._insert_enhanced_options_data(table_name, indicator_results)
+                return await self._insert_enhanced_options_data(table_name, symbol_info, indicator_results)
             elif symbol_info.instrument_type == InstrumentType.INDEX:
-                return await self._insert_enhanced_index_data(table_name, indicator_results)
+                return await self._insert_enhanced_index_data(table_name, symbol_info, indicator_results)
             else:
                 # Default to equity
                 return await self._insert_enhanced_equity_data(table_name, indicator_results)
@@ -501,14 +505,9 @@ class OptimizedQuestDBClient:
         # For now, use basic insertion for options until full implementation
         return await self._insert_enhanced_equity_data(table_name, indicator_results)
     
-    async def _insert_enhanced_index_data(
-        self,
-        table_name: str,
-        indicator_results: List[IndicatorResult]
-    ) -> int:
-        """Insert enhanced index data - simplified for now"""
-        # For now, use equity insertion for indices
-        return await self._insert_enhanced_equity_data(table_name, indicator_results)
+    # Note: This function is replaced by the full implementation below
+    # Keeping for backward compatibility but it should not be called
+    # async def _insert_enhanced_index_data(...) - See full implementation below
     
     async def _insert_enhanced_equity_data(
         self,
@@ -697,31 +696,68 @@ class OptimizedQuestDBClient:
             )
         """
         
-        return await self._execute_batch_insert(insert_query, insert_data, table_name)
+        try:
+            return await self._execute_batch_insert(insert_query, insert_data, table_name)
+        except Exception as e:
+            error_str = str(e)
+            if "Invalid column" in error_str or "column" in error_str.lower():
+                # Table has old schema - try to add missing columns first
+                logger.warning(f"Table {table_name} (EQUITY) has old schema (missing columns), attempting to add missing columns...")
+                
+                # Get required columns for EQUITY type
+                required_columns = self._get_required_columns_for_instrument('EQ')
+                
+                # Create a dummy symbol_info for equity
+                from historicalfetcher.models.data_models import SymbolInfo
+                dummy_symbol_info = SymbolInfo(
+                    symbol=table_name,
+                    exchange='NSE',
+                    instrument_type=InstrumentType.EQUITY
+                )
+                
+                columns_added = await self._add_missing_columns(table_name, dummy_symbol_info, required_columns)
+                
+                if columns_added:
+                    logger.info(f"Successfully added missing columns to {table_name}, retrying insert...")
+                    # Retry the original insert after adding columns
+                    return await self._execute_batch_insert(insert_query, insert_data, table_name)
+                else:
+                    logger.error(f"Could not add missing columns to {table_name}, insert will fail")
+                    raise
+            else:
+                # Re-raise if it's not a column error
+                raise
     
     async def _insert_enhanced_options_data(
         self,
         table_name: str,
+        symbol_info: SymbolInfo,
         indicator_results: List[IndicatorResult]
     ) -> int:
         """Insert enhanced options data with Greeks and indicators"""
         
         insert_data = []
         
+        # Extract options-specific data from symbol_info
+        contract_token = symbol_info.contract_token or symbol_info.symbol
+        option_type = 1 if symbol_info.instrument_type == InstrumentType.CALL_OPTION else 2  # 1=CE, 2=PE
+        strike_int = int((symbol_info.strike or 0) * 100)  # Strike * 100 for precision
+        
+        # Log Greeks status for first result
+        if indicator_results and indicator_results[0].greeks:
+            greeks_keys = list(indicator_results[0].greeks.keys())
+            logger.info(f"Saving Greeks for {symbol_info.symbol}: {greeks_keys}")
+        else:
+            logger.warning(f"No Greeks found in indicator_results for {symbol_info.symbol}")
+        
         for result in indicator_results:
-            # Extract options-specific data
-            contract_token = result.symbol  # Use symbol as contract token for now
-            option_type = 1 if 'CE' in result.symbol else 2  # 1=CE, 2=PE
-            
-            # Extract strike from symbol (this would need proper parsing)
-            strike = 0  # This should be extracted from symbol_info
             
             data_tuple = (
                 # Contract Information
-                contract_token, option_type, strike, result.timeframe,
+                contract_token, option_type, strike_int, result.timeframe,
                 
                 # Basic OHLCV + OI
-                result.open, result.high, result.low, result.close, result.volume, 0,  # OI placeholder
+                result.open, result.high, result.low, result.close, result.volume, result.oi,
                 
                 # Options Greeks
                 result.greeks.get('delta') if result.greeks else None,
@@ -743,28 +779,68 @@ class OptimizedQuestDBClient:
                 
                 # Advanced Greeks
                 result.greeks.get('lambda_greek') if result.greeks else None,
-                None,  # epsilon placeholder
-                None,  # vera placeholder
+                result.greeks.get('epsilon') if result.greeks else None,
+                result.greeks.get('vera') if result.greeks else None,
+                result.greeks.get('charm') if result.greeks else None,
+                result.greeks.get('vanna') if result.greeks else None,
+                result.greeks.get('volga') if result.greeks else None,
                 
                 # Risk Metrics
                 result.greeks.get('probability_itm') if result.greeks else None,
                 None,  # probability_profit placeholder
                 None,  # max_pain placeholder
                 
-                # Technical Indicators (subset for options)
-                result.indicators.get('rsi_14'),
+                # Technical Indicators (ALL calculated indicators for options)
+                # Trend Indicators
                 result.indicators.get('ema_9'),
                 result.indicators.get('ema_21'),
+                result.indicators.get('ema_50'),
+                result.indicators.get('ema_200'),
+                result.indicators.get('sma_20'),
+                result.indicators.get('sma_50'),
+                
+                # Momentum Indicators
+                result.indicators.get('rsi_14'),
+                result.indicators.get('macd_line'),
+                result.indicators.get('macd_signal'),
+                result.indicators.get('macd_histogram'),
+                result.indicators.get('stoch_k'),
+                result.indicators.get('stoch_d'),
+                result.indicators.get('williams_r'),
+                result.indicators.get('cci_20'),
+                
+                # Volatility Indicators
                 result.indicators.get('atr_14'),
                 result.indicators.get('bb_upper'),
+                result.indicators.get('bb_middle'),
                 result.indicators.get('bb_lower'),
+                result.indicators.get('bb_width'),
+                result.indicators.get('bb_percent'),
                 
-                # Volume Indicators (for options)
+                # Trend Following Indicators
+                result.indicators.get('supertrend_7_3'),
+                result.indicators.get('supertrend_signal_7_3'),
+                result.indicators.get('supertrend_10_3'),
+                result.indicators.get('supertrend_signal_10_3'),
+                result.indicators.get('parabolic_sar'),
+                result.indicators.get('adx_14'),
+                result.indicators.get('di_plus'),
+                result.indicators.get('di_minus'),
+                
+                # Volume Indicators
+                result.indicators.get('volume_sma_20'),
+                result.indicators.get('vwap'),
+                result.indicators.get('obv'),
+                result.indicators.get('mfi_14'),
                 result.indicators.get('twap'),
+                
+                # Volume Profile
                 result.indicators.get('volume_profile_poc'),
                 result.indicators.get('volume_profile_vah'),
                 result.indicators.get('volume_profile_val'),
                 result.indicators.get('volume_profile_balance'),
+                
+                # Volume Divergence
                 result.indicators.get('volume_price_divergence'),
                 result.indicators.get('volume_divergence_strength'),
                 result.indicators.get('volume_divergence_confirmed'),
@@ -820,7 +896,7 @@ class OptimizedQuestDBClient:
             
             insert_data.append(data_tuple)
         
-        # Comprehensive options insert query (simplified for now)
+        # Comprehensive options insert query with ALL calculated indicators
         insert_query = f"""
             INSERT INTO {table_name} (
                 contract_token, option_type, strike, tf,
@@ -828,10 +904,15 @@ class OptimizedQuestDBClient:
                 delta, gamma, theta, vega, rho,
                 implied_volatility, historical_volatility, iv_rank, iv_percentile,
                 intrinsic_value, time_value, moneyness,
-                lambda_greek, epsilon, vera,
+                lambda_greek, epsilon, vera, charm, vanna, volga,
                 probability_itm, probability_profit, max_pain,
-                rsi_14, ema_9, ema_21, atr_14, bb_upper, bb_lower,
-                twap, volume_profile_poc, volume_profile_vah, volume_profile_val, volume_profile_balance,
+                ema_9, ema_21, ema_50, ema_200, sma_20, sma_50,
+                rsi_14, macd_line, macd_signal, macd_histogram, stoch_k, stoch_d, williams_r, cci_20,
+                atr_14, bb_upper, bb_middle, bb_lower, bb_width, bb_percent,
+                supertrend_7_3, supertrend_signal_7_3, supertrend_10_3, supertrend_signal_10_3, parabolic_sar,
+                adx_14, di_plus, di_minus,
+                volume_sma_20, vwap, obv, mfi_14, twap,
+                volume_profile_poc, volume_profile_vah, volume_profile_val, volume_profile_balance,
                 volume_price_divergence, volume_divergence_strength, volume_divergence_confirmed,
                 rsi_volume_divergence, macd_volume_divergence, price_volume_divergence_type,
                 bid_1, bid_qty_1, bid_2, bid_qty_2, bid_3, bid_qty_3, bid_4, bid_qty_4, bid_5, bid_qty_5,
@@ -846,21 +927,58 @@ class OptimizedQuestDBClient:
                 $11, $12, $13, $14, $15,
                 $16, $17, $18, $19,
                 $20, $21, $22,
-                $23, $24, $25,
+                $23, $24, $25, $26, $27, $28,
                 $26, $27, $28,
                 $29, $30, $31, $32, $33, $34,
-                $35, $36, $37, $38, $39,
-                $40, $41, $42, $43, $44, $45,
-                $46, $47, $48, $49, $50, $51, $52, $53, $54, $55,
-                $56, $57, $58, $59, $60, $61, $62, $63, $64, $65,
-                $66, $67, $68, $69, $70,
-                $71, $72, $73,
-                $74, $75, $76, $77, $78, $79,
-                $80
+                $35, $36, $37, $38, $39, $40,
+                $41, $42, $43, $44, $45, $46, $47, $48,
+                $49, $50, $51, $52, $53, $54,
+                $55, $56, $57, $58, $59,
+                $60, $61, $62,
+                $63, $64, $65, $66, $67,
+                $68, $69, $70, $71,
+                $72, $73, $74, $75, $76, $77,
+                $78, $79, $80, $81, $82, $83, $84, $85, $86, $87,
+                $88, $89, $90, $91, $92, $93, $94, $95, $96, $97,
+                $98, $99, $100, $101, $102,
+                $103, $104, $105,
+                $106, $107, $108, $109, $110, $111,
+                $112
             )
         """
         
-        return await self._execute_batch_insert(insert_query, insert_data, table_name)
+        try:
+            return await self._execute_batch_insert(insert_query, insert_data, table_name)
+        except Exception as e:
+            error_str = str(e)
+            if "Invalid column" in error_str or "column" in error_str.lower():
+                # Table has old schema - try to add missing columns first
+                logger.warning(f"Table {table_name} (OPTIONS) has old schema (missing columns), attempting to add missing columns...")
+                
+                # Get required columns for OPTIONS type (includes Greeks)
+                required_columns = self._get_required_columns_for_instrument('CE')  # Use CE for options columns
+                
+                # Try to add missing columns
+                # Create a dummy symbol_info for options
+                from historicalfetcher.models.data_models import SymbolInfo
+                dummy_symbol_info = SymbolInfo(
+                    symbol=table_name,
+                    exchange='NFO',
+                    instrument_type=InstrumentType.CALL_OPTION
+                )
+                
+                columns_added = await self._add_missing_columns(table_name, dummy_symbol_info, required_columns)
+                
+                if columns_added:
+                    logger.info(f"Successfully added missing columns to {table_name}, retrying insert...")
+                    # Retry the original insert after adding columns
+                    return await self._execute_batch_insert(insert_query, insert_data, table_name)
+                else:
+                    logger.error(f"Could not add missing columns to {table_name}, insert will fail")
+                    raise
+            else:
+                # Re-raise if it's not a column error
+                raise
     
     async def _insert_enhanced_futures_data(self, table_name: str, indicator_results: List[IndicatorResult]) -> int:
         """Insert enhanced futures data - placeholder implementation"""
@@ -877,25 +995,147 @@ class OptimizedQuestDBClient:
                     result = await conn.fetchrow(f"SELECT * FROM {table_name} LIMIT 1")
                     if result:
                         columns = set(result.keys())
+                        logger.debug(f"Detected {len(columns)} columns in {table_name}: {sorted(columns)}")
                         return columns
                 except Exception as query_error:
-                    # If table is empty or doesn't exist, try to check if it exists
-                    # by attempting a count query
+                    # If table is empty, try to check if it exists by attempting a count query
                     try:
                         await conn.fetchval(f"SELECT COUNT(*) FROM {table_name}")
-                        # Table exists but is empty - try to get schema another way
-                        # For empty tables, we'll need to check the actual schema
-                        # QuestDB doesn't have easy DESCRIBE, so we'll use a fallback
-                        return set()  # Return empty to use all columns (table will be created with new schema)
+                        # Table exists but is empty - try to get schema using a dummy insert approach
+                        # QuestDB doesn't have easy DESCRIBE, so we'll try to infer from a test query
+                        # Try SELECT with a WHERE false to get column names without data
+                        try:
+                            # This should return column names even for empty tables
+                            result = await conn.fetchrow(f"SELECT * FROM {table_name} WHERE false")
+                            if result:
+                                columns = set(result.keys())
+                                logger.debug(f"Detected {len(columns)} columns in empty table {table_name}")
+                                return columns
+                        except:
+                            pass
+                        # If that doesn't work, return empty set to trigger column addition
+                        logger.debug(f"Table {table_name} exists but column detection failed, will add missing columns")
+                        return set()  # Return empty to trigger column addition
                     except:
                         # Table doesn't exist
+                        logger.debug(f"Table {table_name} does not exist")
                         return set()
         except Exception as e:
             logger.debug(f"Could not get columns for table {table_name}: {e}")
-            # Return empty set - will use all columns for new table
+            # Return empty set - will use all columns for new table or trigger column addition
             return set()
     
-    async def _insert_enhanced_index_data(self, table_name: str, indicator_results: List[IndicatorResult]) -> int:
+    def _get_required_columns_for_instrument(self, instrument_type: str) -> Dict[str, str]:
+        """
+        Get all required columns for a given instrument type
+        
+        Args:
+            instrument_type: Instrument type (EQ, FUT, CE, PE, INDEX)
+        
+        Returns:
+            Dict of column_name -> column_type
+        """
+        from historicalfetcher.database.enhanced_schemas import IndicatorColumnDefinitions
+        
+        columns = {}
+        
+        # Common technical indicators for all types
+        columns.update(IndicatorColumnDefinitions.TREND_INDICATORS)
+        columns.update(IndicatorColumnDefinitions.MOMENTUM_INDICATORS)
+        columns.update(IndicatorColumnDefinitions.VOLATILITY_INDICATORS)
+        columns.update(IndicatorColumnDefinitions.TREND_FOLLOWING)
+        columns.update(IndicatorColumnDefinitions.MARKET_DEPTH)
+        columns.update(IndicatorColumnDefinitions.DERIVED_MARKET_DATA)
+        
+        # Additional columns that might be missing
+        # Ichimoku columns
+        ichimoku_columns = {
+            'ichimoku_tenkan_sen': 'DOUBLE',
+            'ichimoku_kijun_sen': 'DOUBLE',
+            'ichimoku_senkou_span_a': 'DOUBLE',
+            'ichimoku_senkou_span_b': 'DOUBLE',
+            'ichimoku_chikou_span': 'DOUBLE',
+            'ichimoku_cloud_top': 'DOUBLE',
+            'ichimoku_cloud_bottom': 'DOUBLE',
+            'ichimoku_cloud_color': 'BYTE',
+            'ichimoku_signal': 'BYTE',
+        }
+        columns.update(ichimoku_columns)
+        
+        # Aroon columns (already in TREND_FOLLOWING but ensure they're there)
+        aroon_columns = {
+            'aroon_up': 'DOUBLE',
+            'aroon_down': 'DOUBLE',
+            'aroon_oscillator': 'DOUBLE',
+            'aroon_signal': 'BYTE',
+        }
+        columns.update(aroon_columns)
+        
+        # Index-specific columns
+        if instrument_type == 'INDEX':
+            index_columns = {
+                'advance_decline_ratio': 'DOUBLE',
+                'high_low_index': 'DOUBLE',
+                'mcclellan_oscillator': 'DOUBLE',
+                'realized_volatility': 'DOUBLE',
+                'garch_volatility': 'DOUBLE',
+            }
+            columns.update(index_columns)
+        
+        # Options-specific columns
+        if instrument_type in ['CE', 'PE']:
+            columns.update(IndicatorColumnDefinitions.OPTIONS_GREEKS)
+            columns.update(IndicatorColumnDefinitions.OPTIONS_ANALYTICS)
+        
+        return columns
+    
+    async def _add_missing_columns(self, table_name: str, symbol_info: SymbolInfo, required_columns: Dict[str, str]) -> bool:
+        """
+        Add missing columns to an existing table using ALTER TABLE
+        
+        Args:
+            table_name: Name of the table
+            symbol_info: Symbol info to determine column types
+            required_columns: Dict of column_name -> column_type (e.g., {'adx_14': 'DOUBLE'})
+        
+        Returns:
+            True if columns were added successfully, False otherwise
+        """
+        try:
+            existing_columns = await self._get_table_columns(table_name)
+            if not existing_columns:
+                logger.warning(f"Cannot add columns to {table_name}: table doesn't exist or columns cannot be detected")
+                return False
+            
+            missing_columns = {col: col_type for col, col_type in required_columns.items() if col not in existing_columns}
+            
+            if not missing_columns:
+                return True  # All columns already exist
+            
+            logger.info(f"Adding {len(missing_columns)} missing columns to {table_name}: {list(missing_columns.keys())}")
+            
+            async with self.pool.acquire() as conn:
+                for col_name, col_type in missing_columns.items():
+                    try:
+                        # QuestDB ALTER TABLE syntax
+                        alter_query = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
+                        await conn.execute(alter_query)
+                        logger.debug(f"Added column {col_name} ({col_type}) to {table_name}")
+                    except Exception as e:
+                        # Column might already exist (race condition) or invalid type
+                        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+                            logger.debug(f"Column {col_name} already exists in {table_name}")
+                        else:
+                            logger.warning(f"Failed to add column {col_name} to {table_name}: {e}")
+                            # Continue with other columns
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error adding missing columns to {table_name}: {e}")
+            return False
+    
+    async def _insert_enhanced_index_data(self, table_name: str, symbol_info: SymbolInfo, indicator_results: List[IndicatorResult]) -> int:
         """Insert enhanced index data - dynamically builds query based on existing table columns"""
         
         if not indicator_results:
@@ -1055,8 +1295,22 @@ class OptimizedQuestDBClient:
         except Exception as e:
             error_str = str(e)
             if "Invalid column" in error_str or "column" in error_str.lower():
-                # Table has old schema - get actual columns and retry with only those
-                logger.warning(f"Table {table_name} has old schema (missing columns), detecting actual columns...")
+                # Table has old schema - try to add missing columns first
+                logger.warning(f"Table {table_name} has old schema (missing columns), attempting to add missing columns...")
+                
+                # Get required columns for INDEX type
+                required_columns = self._get_required_columns_for_instrument('INDEX')
+                
+                # Try to add missing columns
+                columns_added = await self._add_missing_columns(table_name, symbol_info, required_columns)
+                
+                if columns_added:
+                    logger.info(f"Successfully added missing columns to {table_name}, retrying insert...")
+                    # Retry the original insert after adding columns
+                    return await self._execute_batch_insert(insert_query, insert_data, table_name)
+                else:
+                    # If we can't add columns, fall back to using only existing columns
+                    logger.warning(f"Could not add missing columns to {table_name}, using only existing columns...")
                 
                 # Try to get actual columns by querying the table
                 actual_columns = await self._get_table_columns(table_name)
@@ -1089,10 +1343,22 @@ class OptimizedQuestDBClient:
                     # Add other columns if they exist in safe_columns
                     for col in safe_columns:
                         if col not in safe_mapping:
-                            if col.startswith('ema_') or col.startswith('sma_') or col in ['rsi_14', 'macd_line', 'macd_signal', 'macd_histogram', 'stoch_k', 'stoch_d', 'atr_14', 'bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'bb_percent', 'supertrend_7_3', 'supertrend_signal_7_3', 'supertrend_10_3', 'supertrend_signal_10_3', 'parabolic_sar', 'advance_decline_ratio', 'high_low_index', 'mcclellan_oscillator', 'realized_volatility', 'garch_volatility']:
+                            # Indicator columns
+                            if (col.startswith('ema_') or col.startswith('sma_') or 
+                                col in ['rsi_14', 'macd_line', 'macd_signal', 'macd_histogram', 'stoch_k', 'stoch_d', 
+                                       'atr_14', 'bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'bb_percent', 
+                                       'supertrend_7_3', 'supertrend_signal_7_3', 'supertrend_10_3', 'supertrend_signal_10_3', 
+                                       'parabolic_sar', 'adx_14', 'di_plus', 'di_minus',
+                                       'ichimoku_tenkan_sen', 'ichimoku_kijun_sen', 'ichimoku_senkou_span_a', 'ichimoku_senkou_span_b',
+                                       'ichimoku_chikou_span', 'ichimoku_cloud_top', 'ichimoku_cloud_bottom', 'ichimoku_cloud_color', 'ichimoku_signal',
+                                       'aroon_up', 'aroon_down', 'aroon_oscillator', 'aroon_signal',
+                                       'advance_decline_ratio', 'high_low_index', 'mcclellan_oscillator', 
+                                       'realized_volatility', 'garch_volatility']):
                                 safe_mapping[col] = result.indicators.get(col)
+                            # Derived metrics columns
                             elif col in ['pivot_point', 'resistance_1', 'resistance_2', 'resistance_3', 'support_1', 'support_2', 'support_3', 'price_change', 'price_change_pct', 'high_low_pct']:
                                 safe_mapping[col] = result.derived_metrics.get(col) if result.derived_metrics else None
+                            # Market depth columns
                             elif col.startswith('bid_') or col.startswith('ask_') or col in ['bid_ask_spread', 'bid_ask_spread_pct', 'mid_price', 'total_bid_qty', 'total_ask_qty']:
                                 safe_mapping[col] = result.market_depth.get(col) if result.market_depth else None
                     

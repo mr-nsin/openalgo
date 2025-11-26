@@ -267,17 +267,58 @@ class EnhancedTableSchemas:
             lambda_greek DOUBLE,        -- Leverage (Delta * S / Premium)
             epsilon DOUBLE,             -- Dividend sensitivity
             vera DOUBLE,                -- Volatility elasticity
+            charm DOUBLE,               -- Delta decay (Delta/Theta)
+            vanna DOUBLE,               -- Vega/Delta cross-sensitivity
+            volga DOUBLE,               -- Vega convexity
             
             -- Risk Metrics
             probability_itm DOUBLE,     -- Probability of finishing ITM
             probability_profit DOUBLE,  -- Probability of profit
             max_pain DOUBLE,            -- Max pain level
             
-            -- Technical Indicators (for options premium)
+            -- Technical Indicators (ALL calculated indicators for options premium)
+            -- Trend Indicators
+            ema_9 DOUBLE, ema_21 DOUBLE, ema_50 DOUBLE, ema_200 DOUBLE,
+            sma_20 DOUBLE, sma_50 DOUBLE,
+            
+            -- Momentum Indicators
             rsi_14 DOUBLE,
-            ema_9 DOUBLE, ema_21 DOUBLE,
+            macd_line DOUBLE, macd_signal DOUBLE, macd_histogram DOUBLE,
+            stoch_k DOUBLE, stoch_d DOUBLE,
+            williams_r DOUBLE,
+            cci_20 DOUBLE,
+            
+            -- Volatility Indicators
             atr_14 DOUBLE,
-            bb_upper DOUBLE, bb_lower DOUBLE,
+            bb_upper DOUBLE, bb_middle DOUBLE, bb_lower DOUBLE,
+            bb_width DOUBLE, bb_percent DOUBLE,
+            
+            -- Trend Following Indicators
+            supertrend_7_3 DOUBLE, supertrend_signal_7_3 BYTE,
+            supertrend_10_3 DOUBLE, supertrend_signal_10_3 BYTE,
+            parabolic_sar DOUBLE,
+            adx_14 DOUBLE, di_plus DOUBLE, di_minus DOUBLE,
+            
+            -- Volume Indicators
+            volume_sma_20 DOUBLE,
+            vwap DOUBLE,
+            obv LONG,
+            mfi_14 DOUBLE,
+            twap DOUBLE,
+            
+            -- Volume Profile
+            volume_profile_poc DOUBLE,
+            volume_profile_vah DOUBLE,
+            volume_profile_val DOUBLE,
+            volume_profile_balance DOUBLE,
+            
+            -- Volume Divergence
+            volume_price_divergence DOUBLE,
+            volume_divergence_strength DOUBLE,
+            volume_divergence_confirmed BYTE,
+            rsi_volume_divergence DOUBLE,
+            macd_volume_divergence DOUBLE,
+            price_volume_divergence_type BYTE,
             
             -- Market Microstructure (5 levels)
             bid_1 DOUBLE, bid_qty_1 LONG,
@@ -347,6 +388,28 @@ class EnhancedTableSchemas:
             supertrend_7_3 DOUBLE, supertrend_signal_7_3 BYTE,
             supertrend_10_3 DOUBLE, supertrend_signal_10_3 BYTE,
             parabolic_sar DOUBLE,
+            
+            -- ADX and Directional Indicators
+            adx_14 DOUBLE,              -- Average Directional Index
+            di_plus DOUBLE,             -- Directional Indicator +
+            di_minus DOUBLE,            -- Directional Indicator -
+            
+            -- Ichimoku Cloud
+            ichimoku_tenkan_sen DOUBLE,
+            ichimoku_kijun_sen DOUBLE,
+            ichimoku_senkou_span_a DOUBLE,
+            ichimoku_senkou_span_b DOUBLE,
+            ichimoku_chikou_span DOUBLE,
+            ichimoku_cloud_top DOUBLE,
+            ichimoku_cloud_bottom DOUBLE,
+            ichimoku_cloud_color BYTE,  -- 1=Green, 0=Red
+            ichimoku_signal BYTE,       -- 1=Buy, 0=Sell
+            
+            -- Aroon Indicator
+            aroon_up DOUBLE,
+            aroon_down DOUBLE,
+            aroon_oscillator DOUBLE,
+            aroon_signal BYTE,          -- 1=Up, 0=Down
             
             -- Support/Resistance Levels
             pivot_point DOUBLE,

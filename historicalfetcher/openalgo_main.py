@@ -10,7 +10,7 @@ import sys
 import os
 import traceback
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import time
 
 # Ensure historical_fetcher local packages (database/, models/, etc.) are importable
@@ -53,6 +53,7 @@ except ImportError:
     logger.warning("python-dotenv not installed. Using system environment variables only.")
 # Import from historicalfetcher local packages
 from historicalfetcher.config.openalgo_settings import OpenAlgoSettings, InstrumentType, TimeFrame
+from historicalfetcher.models.data_models import SymbolInfo
 from historicalfetcher.fetchers.openalgo_zerodha_fetcher import OpenAlgoZerodhaHistoricalFetcher, OpenAlgoSymbolManager
 from historicalfetcher.database.optimized_questdb_client import OptimizedQuestDBClient
 from historicalfetcher.database.models import FetchSummaryModel
@@ -171,10 +172,64 @@ class OpenAlgoHistoricalDataFetcher:
                 )
             
             # Process each instrument type in priority order
-            # Priority: INDEX first, then CE, PE, FUT, EQ
-            priority_order = ['INDEX', 'CE', 'PE', 'FUT', 'EQ']
+            # Priority: INDEX CE/PE FIRST, then INDEX symbols, then equity CE/PE, then FUT, EQ
             
-            # Process INDEX symbols first (already sorted by symbol manager with priority indices first)
+            # Helper function to check if an option is an index option
+            def is_index_option(symbol_info):
+                """Check if a CE/PE option is an index option based on underlying symbol"""
+                import re
+                symbol_upper = symbol_info.symbol.upper()
+                
+                # Extract underlying from option symbol (e.g., "NIFTY28NOV2424000CE" -> "NIFTY")
+                # Pattern: UNDERLYING + DATE + STRIKE + CE/PE
+                match = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2}[\d.]+)(CE|PE)$", symbol_upper)
+                if match:
+                    underlying = match.group(1)
+                    # Check if underlying is an index
+                    index_underlyings = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX", 
+                                       "NIFTY50", "NIFTY IT", "NIFTY BANK", "NIFTY NEXT 50", "NIFTY MIDCAP 50"]
+                    # Direct match
+                    if underlying in index_underlyings:
+                        return True
+                    # Check if underlying contains index keywords
+                    index_keywords = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX"]
+                    if any(keyword in underlying for keyword in index_keywords):
+                        return True
+                
+                # Fallback: Check if symbol itself contains index keywords (for edge cases)
+                index_keywords = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX"]
+                if any(keyword in symbol_upper for keyword in index_keywords):
+                    return True
+                
+                return False
+            
+            # ============================================================
+            # PRIORITY 1: INDEX CE OPTIONS (Fetch FIRST)
+            # ============================================================
+            if 'CE' in symbols_by_type and symbols_by_type['CE']:
+                ce_symbols = symbols_by_type['CE']
+                index_ce_symbols = [s for s in ce_symbols if is_index_option(s)]
+                
+                # Process INDEX CE options FIRST (highest priority)
+                if index_ce_symbols:
+                    logger.info(f"🔄 [PRIORITY 1] Processing {len(index_ce_symbols):,} INDEX CE options")
+                    await self._process_instrument_type('CE', index_ce_symbols)
+            
+            # ============================================================
+            # PRIORITY 2: INDEX PE OPTIONS (Fetch SECOND)
+            # ============================================================
+            if 'PE' in symbols_by_type and symbols_by_type['PE']:
+                pe_symbols = symbols_by_type['PE']
+                index_pe_symbols = [s for s in pe_symbols if is_index_option(s)]
+                
+                # Process INDEX PE options SECOND
+                if index_pe_symbols:
+                    logger.info(f"🔄 [PRIORITY 2] Processing {len(index_pe_symbols):,} INDEX PE options")
+                    await self._process_instrument_type('PE', index_pe_symbols)
+            
+            # ============================================================
+            # PRIORITY 3: INDEX SYMBOLS (Spot/Index values like NIFTY, BANKNIFTY)
+            # ============================================================
             if 'INDEX' in symbols_by_type and symbols_by_type['INDEX']:
                 index_symbols = symbols_by_type['INDEX']
                 
@@ -184,27 +239,50 @@ class OpenAlgoHistoricalDataFetcher:
                 
                 # Process NSE_INDEX first (includes NIFTY, BANKNIFTY, etc.)
                 if nse_index_symbols:
-                    logger.info(f"🔄 Processing {len(nse_index_symbols):,} NSE_INDEX symbols")
+                    logger.info(f"🔄 [PRIORITY 3] Processing {len(nse_index_symbols):,} NSE_INDEX symbols")
                     await self._process_instrument_type('INDEX', nse_index_symbols)
                 
                 # Then process other INDEX symbols (BSE_INDEX, etc.)
                 if other_index_symbols:
-                    logger.info(f"🔄 Processing {len(other_index_symbols):,} other INDEX symbols")
+                    logger.info(f"🔄 [PRIORITY 3] Processing {len(other_index_symbols):,} other INDEX symbols")
                     await self._process_instrument_type('INDEX', other_index_symbols)
             
-            # Process remaining instrument types in priority order
-            for instrument_type in priority_order:
-                if instrument_type == 'INDEX':  # Already processed above
-                    continue
-                    
+            # ============================================================
+            # PRIORITY 4: EQUITY CE OPTIONS
+            # ============================================================
+            if 'CE' in symbols_by_type and symbols_by_type['CE']:
+                ce_symbols = symbols_by_type['CE']
+                equity_ce_symbols = [s for s in ce_symbols if not is_index_option(s)]
+                
+                # Process equity CE options
+                if equity_ce_symbols:
+                    logger.info(f"🔄 [PRIORITY 4] Processing {len(equity_ce_symbols):,} equity CE options")
+                    await self._process_instrument_type('CE', equity_ce_symbols)
+            
+            # ============================================================
+            # PRIORITY 5: EQUITY PE OPTIONS
+            # ============================================================
+            if 'PE' in symbols_by_type and symbols_by_type['PE']:
+                pe_symbols = symbols_by_type['PE']
+                equity_pe_symbols = [s for s in pe_symbols if not is_index_option(s)]
+                
+                # Process equity PE options
+                if equity_pe_symbols:
+                    logger.info(f"🔄 [PRIORITY 5] Processing {len(equity_pe_symbols):,} equity PE options")
+                    await self._process_instrument_type('PE', equity_pe_symbols)
+            
+            # Process remaining instrument types (FUT, EQ)
+            remaining_types = ['FUT', 'EQ']
+            for instrument_type in remaining_types:
                 if instrument_type in symbols_by_type and symbols_by_type[instrument_type]:
                     symbols = symbols_by_type[instrument_type]
                     logger.info(f"🔄 Processing {len(symbols):,} {instrument_type} symbols")
                     await self._process_instrument_type(instrument_type, symbols)
             
             # Process any remaining instrument types not in priority list
+            processed_types = {'INDEX', 'CE', 'PE', 'FUT', 'EQ'}
             for instrument_type, symbols in symbols_by_type.items():
-                if instrument_type not in priority_order and instrument_type != 'INDEX':
+                if instrument_type not in processed_types:
                     if symbols:
                         logger.info(f"🔄 Processing {len(symbols):,} {instrument_type} symbols")
                         await self._process_instrument_type(instrument_type, symbols)
@@ -385,6 +463,79 @@ class OpenAlgoHistoricalDataFetcher:
                     failed=self.stats['failed_symbols']
                 )
     
+    async def _fetch_underlying_spot_price(self, symbol_info: SymbolInfo) -> Optional[float]:
+        """
+        Fetch spot price (LTP) for the underlying symbol of an option
+        
+        Args:
+            symbol_info: SymbolInfo for the option (CE/PE)
+            
+        Returns:
+            Spot price (LTP) as float, or None if fetch fails
+        """
+        try:
+            # Extract underlying symbol from option symbol
+            import re
+            underlying = symbol_info.symbol
+            match = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2}[\d.]+)(CE|PE)$", symbol_info.symbol.upper())
+            if match:
+                underlying = match.group(1)
+            else:
+                logger.warning(f"Could not extract underlying from option symbol: {symbol_info.symbol}")
+                return None
+            
+            # Determine underlying exchange
+            # For NFO options, underlying is usually on NSE or NSE_INDEX
+            underlying_exchange = "NSE"
+            if underlying in ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX"]:
+                underlying_exchange = "NSE_INDEX"
+            
+            # Fetch quote using OpenAlgo client's broker_data
+            if not self.zerodha_fetcher.openalgo_client:
+                await self.zerodha_fetcher.initialize()
+            
+            client = self.zerodha_fetcher.openalgo_client
+            
+            # Use broker_data.get_quotes method if available
+            try:
+                if hasattr(client, 'broker_data') and hasattr(client.broker_data, 'get_quotes'):
+                    quote_data = client.broker_data.get_quotes(symbol=underlying, exchange=underlying_exchange)
+                    if quote_data and isinstance(quote_data, dict):
+                        ltp = quote_data.get('ltp')
+                        if ltp and ltp > 0:
+                            logger.debug(f"Fetched spot price for {underlying}: {ltp}")
+                            return float(ltp)
+                elif hasattr(client, 'get_quotes'):
+                    # Direct get_quotes method
+                    quote_data = client.get_quotes(symbol=underlying, exchange=underlying_exchange)
+                    if quote_data and isinstance(quote_data, dict):
+                        ltp = quote_data.get('ltp')
+                        if ltp and ltp > 0:
+                            logger.debug(f"Fetched spot price for {underlying}: {ltp}")
+                            return float(ltp)
+                else:
+                    # Try using services/quotes_service
+                    from services.quotes_service import get_quotes
+                    success, quote_response, status_code = get_quotes(
+                        symbol=underlying,
+                        exchange=underlying_exchange,
+                        api_key=self.settings.openalgo_api_key
+                    )
+                    if success and quote_response:
+                        ltp = quote_response.get('data', {}).get('ltp')
+                        if ltp and ltp > 0:
+                            logger.debug(f"Fetched spot price for {underlying}: {ltp}")
+                            return float(ltp)
+            except Exception as e:
+                logger.debug(f"Error fetching spot price for {underlying}: {e}")
+            
+            logger.warning(f"Could not fetch LTP for {underlying} on {underlying_exchange}")
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Error fetching spot price for {symbol_info.symbol} (underlying: {underlying}): {e}")
+            return None
+    
     async def _process_single_symbol(self, symbol_info) -> int:
         """Process historical data for a single symbol across all timeframes"""
         
@@ -451,12 +602,26 @@ class OpenAlgoHistoricalDataFetcher:
                         # Log after fetching: Records count, Min/Max timestamp with symbol
                         logger.info(f"📊 Received {symbol_info.symbol} | {len(candles):,} records | Min: {min_time_str} | Max: {max_time_str} | Timeframe: {timeframe.value}")
                         
+                        # Get spot price for options (CE/PE)
+                        # Note: Historical API does NOT include underlying spot price in the response
+                        # The API only returns: timestamp, open, high, low, close, volume, oi
+                        # We need to fetch spot price separately via quotes API
+                        spot_price = None
+                        if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE]:
+                            logger.debug(f"Fetching underlying spot price for {symbol_info.symbol} via quotes API...")
+                            spot_price = await self._fetch_underlying_spot_price(symbol_info)
+                            if spot_price is None or spot_price == 0:
+                                logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol}, Greeks calculation may be inaccurate")
+                            else:
+                                logger.debug(f"✅ Fetched spot price for {symbol_info.symbol}: {spot_price}")
+                        
                         # Store in QuestDB
                         async with AsyncTimer(self.performance_monitor, f'store_{timeframe.value}'):
                             records_inserted = await self.questdb_client.upsert_historical_data_with_indicators(
                                 symbol_info,
                                 timeframe,
-                                candles
+                                candles,
+                                spot_price=spot_price
                             )
                         
                         total_records += records_inserted
