@@ -175,34 +175,163 @@ class OpenAlgoHistoricalDataFetcher:
             # Priority: INDEX CE/PE FIRST, then INDEX symbols, then equity CE/PE, then FUT, EQ
             
             # Helper function to check if an option is an index option
-            def is_index_option(symbol_info):
-                """Check if a CE/PE option is an index option based on underlying symbol"""
+            def extract_underlying_from_option(symbol_info):
+                """Extract underlying symbol from option symbol (e.g., "NIFTY28NOV2424000CE" -> "NIFTY")"""
                 import re
                 symbol_upper = symbol_info.symbol.upper()
                 
-                # Extract underlying from option symbol (e.g., "NIFTY28NOV2424000CE" -> "NIFTY")
                 # Pattern: UNDERLYING + DATE + STRIKE + CE/PE
                 match = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2}[\d.]+)(CE|PE)$", symbol_upper)
                 if match:
-                    underlying = match.group(1)
-                    # Check if underlying is an index
-                    index_underlyings = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX", 
-                                       "NIFTY50", "NIFTY IT", "NIFTY BANK", "NIFTY NEXT 50", "NIFTY MIDCAP 50"]
-                    # Direct match
-                    if underlying in index_underlyings:
-                        return True
-                    # Check if underlying contains index keywords
-                    index_keywords = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX"]
-                    if any(keyword in underlying for keyword in index_keywords):
-                        return True
+                    return match.group(1)
                 
-                # Fallback: Check if symbol itself contains index keywords (for edge cases)
-                index_keywords = ["NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX"]
-                if any(keyword in symbol_upper for keyword in index_keywords):
+                # Fallback: try to extract from name field if available
+                if hasattr(symbol_info, 'name') and symbol_info.name:
+                    return symbol_info.name.upper()
+                
+                return None
+            
+            def is_index_option(symbol_info):
+                """Check if a CE/PE option is an index option based on underlying symbol"""
+                underlying = extract_underlying_from_option(symbol_info)
+                if not underlying:
+                    return False
+                
+                # Check if underlying is an index
+                index_underlyings = ["NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX", "BANKEX", 
+                                   "NIFTY50", "NIFTY IT", "NIFTY BANK", "NIFTY NEXT 50", "NIFTY MIDCAP 50"]
+                # Direct match
+                if underlying in index_underlyings:
                     return True
+                
+                # Partial match (e.g., "NIFTY50" contains "NIFTY")
+                for index_underlying in index_underlyings:
+                    if index_underlying in underlying or underlying in index_underlying:
+                        return True
                 
                 return False
             
+            def is_allowed_underlying(symbol_info):
+                """Check if option's underlying is in the allowed list"""
+                # If filtering is disabled, allow all
+                if not self.settings.options_filter_by_underlying:
+                    return True
+                
+                # If no allowed underlyings specified, allow all
+                if not self.settings.options_allowed_underlyings:
+                    return True
+                
+                underlying = extract_underlying_from_option(symbol_info)
+                if not underlying:
+                    return False
+                
+                # Check if underlying is in allowed list (case-insensitive, exact match)
+                underlying_upper = underlying.upper()
+                for allowed in self.settings.options_allowed_underlyings:
+                    if allowed.upper() == underlying_upper:
+                        return True
+                    # Also check for partial matches (e.g., "NIFTY50" contains "NIFTY")
+                    if allowed.upper() in underlying_upper or underlying_upper in allowed.upper():
+                        return True
+                
+                return False
+            
+            # Helper function to parse expiry date from symbol or expiry field
+            def parse_expiry_date(symbol_info):
+                """Parse expiry date from symbol_info"""
+                from datetime import datetime as dt
+                import re
+                
+                # First try to use expiry field if available
+                if symbol_info.expiry:
+                    try:
+                        # Try DD-MMM-YY format (e.g., "28-Nov-24")
+                        return dt.strptime(symbol_info.expiry, "%d-%b-%y").date()
+                    except:
+                        try:
+                            # Try DDMMMYY format (e.g., "28NOV24")
+                            if len(symbol_info.expiry) == 7 and symbol_info.expiry[2:5].isalpha():
+                                day = int(symbol_info.expiry[:2])
+                                month_str = symbol_info.expiry[2:5].upper()
+                                year = int('20' + symbol_info.expiry[5:7])
+                                month_map = {
+                                    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                                    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+                                }
+                                month = month_map.get(month_str, 1)
+                                return dt(year, month, day).date()
+                        except:
+                            pass
+                
+                # Try to extract from symbol: SYMBOL + DDMMMYY + STRIKE + CE/PE
+                match = re.match(r"^[A-Z]+(\d{2}[A-Z]{3}\d{2})[\d.]+(CE|PE)$", symbol_info.symbol.upper())
+                if match:
+                    expiry_str = match.group(1)  # e.g., "28NOV24"
+                    try:
+                        day = int(expiry_str[:2])
+                        month_str = expiry_str[2:5].upper()
+                        year = int('20' + expiry_str[5:7])
+                        month_map = {
+                            'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                            'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+                        }
+                        month = month_map.get(month_str, 1)
+                        return dt(year, month, day).date()
+                    except:
+                        pass
+                
+                return None
+            
+            # Helper function to filter and sort options by expiry
+            def filter_options_by_expiry(options_list):
+                """Filter options to only include nearest N expiries, sorted by expiry date"""
+                from datetime import date
+                
+                today = date.today()
+                max_expiries = self.settings.options_max_expiries
+                
+                # Group options by expiry date
+                options_by_expiry = {}
+                for option in options_list:
+                    expiry_date = parse_expiry_date(option)
+                    if expiry_date:
+                        # Only include expiries not in the past
+                        if expiry_date >= today:
+                            if expiry_date not in options_by_expiry:
+                                options_by_expiry[expiry_date] = []
+                            options_by_expiry[expiry_date].append(option)
+                    else:
+                        # If we can't parse expiry, include it but log warning
+                        logger.debug(f"Could not parse expiry for {option.symbol}, including anyway")
+                        # Add to a special "unknown" expiry group
+                        if None not in options_by_expiry:
+                            options_by_expiry[None] = []
+                        options_by_expiry[None].append(option)
+                
+                # Sort expiries by date (earliest first), None expiries go last
+                sorted_expiries = sorted([exp for exp in options_by_expiry.keys() if exp is not None])
+                if None in options_by_expiry:
+                    sorted_expiries.append(None)
+                
+                # Take only the first N expiries (nearest expiries)
+                selected_expiries = sorted_expiries[:max_expiries]
+                
+                # Flatten the list of options, maintaining order by expiry
+                filtered_options = []
+                for expiry_date in selected_expiries:
+                    filtered_options.extend(options_by_expiry[expiry_date])
+                
+                # Log filtering results
+                if len(options_list) != len(filtered_options):
+                    logger.info(f"📅 Options expiry filtering:")
+                    logger.info(f"   Total options: {len(options_list)}")
+                    logger.info(f"   After filtering: {len(filtered_options)}")
+                    logger.info(f"   Selected expiries: {len([e for e in selected_expiries if e is not None])} (max: {max_expiries} nearest expiries)")
+                    if selected_expiries and selected_expiries[0] is not None:
+                        logger.info(f"   Expiry dates: {[str(exp) for exp in selected_expiries if exp is not None]}")
+                
+                return filtered_options
+
             # ============================================================
             # PRIORITY 1: INDEX CE OPTIONS (Fetch FIRST)
             # ============================================================
@@ -210,10 +339,21 @@ class OpenAlgoHistoricalDataFetcher:
                 ce_symbols = symbols_by_type['CE']
                 index_ce_symbols = [s for s in ce_symbols if is_index_option(s)]
                 
-                # Process INDEX CE options FIRST (highest priority)
+                # Filter by allowed underlyings if configured
+                if self.settings.options_filter_by_underlying and self.settings.options_allowed_underlyings:
+                    before_count = len(index_ce_symbols)
+                    index_ce_symbols = [s for s in index_ce_symbols if is_allowed_underlying(s)]
+                    if before_count != len(index_ce_symbols):
+                        logger.info(f"📋 Filtered INDEX CE options: {before_count:,} -> {len(index_ce_symbols):,} (allowed underlyings: {', '.join(self.settings.options_allowed_underlyings)})")
+                
+                # Filter and sort by expiry: only nearest N expiries within M months, earliest first
                 if index_ce_symbols:
-                    logger.info(f"🔄 [PRIORITY 1] Processing {len(index_ce_symbols):,} INDEX CE options")
-                    await self._process_instrument_type('CE', index_ce_symbols)
+                    index_ce_symbols = filter_options_by_expiry(index_ce_symbols)
+                    
+                    # Process INDEX CE options FIRST (highest priority)
+                    if index_ce_symbols:
+                        logger.info(f"🔄 [PRIORITY 1] Processing {len(index_ce_symbols):,} INDEX CE options (filtered by expiry)")
+                        await self._process_instrument_type('CE', index_ce_symbols)
             
             # ============================================================
             # PRIORITY 2: INDEX PE OPTIONS (Fetch SECOND)
@@ -222,10 +362,21 @@ class OpenAlgoHistoricalDataFetcher:
                 pe_symbols = symbols_by_type['PE']
                 index_pe_symbols = [s for s in pe_symbols if is_index_option(s)]
                 
-                # Process INDEX PE options SECOND
+                # Filter by allowed underlyings if configured
+                if self.settings.options_filter_by_underlying and self.settings.options_allowed_underlyings:
+                    before_count = len(index_pe_symbols)
+                    index_pe_symbols = [s for s in index_pe_symbols if is_allowed_underlying(s)]
+                    if before_count != len(index_pe_symbols):
+                        logger.info(f"📋 Filtered INDEX PE options: {before_count:,} -> {len(index_pe_symbols):,} (allowed underlyings: {', '.join(self.settings.options_allowed_underlyings)})")
+                
+                # Filter and sort by expiry: only nearest N expiries within M months, earliest first
                 if index_pe_symbols:
-                    logger.info(f"🔄 [PRIORITY 2] Processing {len(index_pe_symbols):,} INDEX PE options")
-                    await self._process_instrument_type('PE', index_pe_symbols)
+                    index_pe_symbols = filter_options_by_expiry(index_pe_symbols)
+                    
+                    # Process INDEX PE options SECOND
+                    if index_pe_symbols:
+                        logger.info(f"🔄 [PRIORITY 2] Processing {len(index_pe_symbols):,} INDEX PE options (filtered by expiry)")
+                        await self._process_instrument_type('PE', index_pe_symbols)
             
             # ============================================================
             # PRIORITY 3: INDEX SYMBOLS (Spot/Index values like NIFTY, BANKNIFTY)
@@ -254,10 +405,21 @@ class OpenAlgoHistoricalDataFetcher:
                 ce_symbols = symbols_by_type['CE']
                 equity_ce_symbols = [s for s in ce_symbols if not is_index_option(s)]
                 
-                # Process equity CE options
+                # Filter by allowed underlyings if configured (for equity options too)
+                if self.settings.options_filter_by_underlying and self.settings.options_allowed_underlyings:
+                    before_count = len(equity_ce_symbols)
+                    equity_ce_symbols = [s for s in equity_ce_symbols if is_allowed_underlying(s)]
+                    if before_count != len(equity_ce_symbols):
+                        logger.info(f"📋 Filtered EQUITY CE options: {before_count:,} -> {len(equity_ce_symbols):,} (allowed underlyings: {', '.join(self.settings.options_allowed_underlyings)})")
+                
+                # Filter and sort by expiry: only nearest N expiries within M months, earliest first
                 if equity_ce_symbols:
-                    logger.info(f"🔄 [PRIORITY 4] Processing {len(equity_ce_symbols):,} equity CE options")
-                    await self._process_instrument_type('CE', equity_ce_symbols)
+                    equity_ce_symbols = filter_options_by_expiry(equity_ce_symbols)
+                    
+                    # Process equity CE options
+                    if equity_ce_symbols:
+                        logger.info(f"🔄 [PRIORITY 4] Processing {len(equity_ce_symbols):,} equity CE options (filtered by expiry)")
+                        await self._process_instrument_type('CE', equity_ce_symbols)
             
             # ============================================================
             # PRIORITY 5: EQUITY PE OPTIONS
@@ -266,10 +428,21 @@ class OpenAlgoHistoricalDataFetcher:
                 pe_symbols = symbols_by_type['PE']
                 equity_pe_symbols = [s for s in pe_symbols if not is_index_option(s)]
                 
-                # Process equity PE options
+                # Filter by allowed underlyings if configured (for equity options too)
+                if self.settings.options_filter_by_underlying and self.settings.options_allowed_underlyings:
+                    before_count = len(equity_pe_symbols)
+                    equity_pe_symbols = [s for s in equity_pe_symbols if is_allowed_underlying(s)]
+                    if before_count != len(equity_pe_symbols):
+                        logger.info(f"📋 Filtered EQUITY PE options: {before_count:,} -> {len(equity_pe_symbols):,} (allowed underlyings: {', '.join(self.settings.options_allowed_underlyings)})")
+                
+                # Filter and sort by expiry: only nearest N expiries within M months, earliest first
                 if equity_pe_symbols:
-                    logger.info(f"🔄 [PRIORITY 5] Processing {len(equity_pe_symbols):,} equity PE options")
-                    await self._process_instrument_type('PE', equity_pe_symbols)
+                    equity_pe_symbols = filter_options_by_expiry(equity_pe_symbols)
+                    
+                    # Process equity PE options
+                    if equity_pe_symbols:
+                        logger.info(f"🔄 [PRIORITY 5] Processing {len(equity_pe_symbols):,} equity PE options (filtered by expiry)")
+                        await self._process_instrument_type('PE', equity_pe_symbols)
             
             # Process remaining instrument types (FUT, EQ)
             remaining_types = ['FUT', 'EQ']
@@ -569,19 +742,94 @@ class OpenAlgoHistoricalDataFetcher:
                     
                     date_range_str = f"{from_date.date()} to {to_date.date()}"
                     
-                    # Log before fetching: Symbol, Timeframe, Date Range
-                    logger.info(f"📥 Fetching {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str}")
+                    # ============================================================
+                    # VALIDATE DATE RANGE BEFORE API CALL
+                    # ============================================================
+                    today_datetime = datetime.combine(datetime.now().date(), datetime.min.time())
+                    validation_errors = []
+                    
+                    # Check if dates are in the future
+                    if from_date > today_datetime:
+                        validation_errors.append(f"Start date {from_date.date()} is in the future")
+                    if to_date > today_datetime:
+                        validation_errors.append(f"End date {to_date.date()} is in the future")
+                    
+                    # Check if start_date > end_date
+                    if from_date > to_date:
+                        validation_errors.append(f"Start date {from_date.date()} is after end date {to_date.date()}")
+                    
+                    # Check date range size (warn if too large)
+                    days_in_range = (to_date - from_date).days
+                    if days_in_range > 400:
+                        validation_errors.append(f"Date range is very large: {days_in_range} days (may cause broker API issues)")
+                    
+                    if validation_errors:
+                        error_msg = "; ".join(validation_errors)
+                        logger.error(f"❌ DATE VALIDATION FAILED for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}): {error_msg}")
+                        logger.error(f"   Requested range: {date_range_str}")
+                        logger.error(f"   Today: {today_datetime.date()}")
+                        
+                        self.metrics_tracker.record_symbol_failure(
+                            symbol_info=symbol_info,
+                            timeframe=timeframe,
+                            date_range=date_range_str,
+                            failure_reason=FailureReason.CONVERSION_ERROR,
+                            error_message=f"Date validation failed: {error_msg}"
+                        )
+                        continue
+                    
+                    # ============================================================
+                    # DETAILED LOGGING BEFORE API CALL
+                    # ============================================================
+                    logger.info(f"📥 Fetching {symbol_info.symbol} | Exchange: {symbol_info.exchange} | Type: {symbol_info.instrument_type} | Timeframe: {timeframe.value} | Date Range: {date_range_str} | Days: {days_in_range}")
+                    logger.debug(f"   📋 Request Details:")
+                    logger.debug(f"      - Symbol: {symbol_info.symbol}")
+                    logger.debug(f"      - Exchange: {symbol_info.exchange}")
+                    logger.debug(f"      - Instrument Type: {symbol_info.instrument_type}")
+                    logger.debug(f"      - Token: {symbol_info.token}")
+                    logger.debug(f"      - Timeframe: {timeframe.value}")
+                    logger.debug(f"      - Start Date: {from_date.date()} ({from_date.strftime('%Y-%m-%d %H:%M:%S')})")
+                    logger.debug(f"      - End Date: {to_date.date()} ({to_date.strftime('%Y-%m-%d %H:%M:%S')})")
+                    logger.debug(f"      - Days in Range: {days_in_range}")
+                    logger.debug(f"      - Today: {today_datetime.date()}")
                     
                     # Increment total timeframes counter
                     self.metrics_tracker.increment_total_timeframes()
                     
-                    # Fetch historical data
-                    candles = await self.zerodha_fetcher.fetch_historical_data(
-                        symbol_info,
-                        timeframe,
-                        from_date,
-                        to_date
-                    )
+                    # Fetch historical data with enhanced error handling
+                    try:
+                        candles = await self.zerodha_fetcher.fetch_historical_data(
+                            symbol_info,
+                            timeframe,
+                            from_date,
+                            to_date
+                        )
+                    except Exception as fetch_error:
+                        # Enhanced error logging for broker API failures
+                        error_msg = str(fetch_error)
+                        error_type = type(fetch_error).__name__
+                        
+                        logger.error(f"❌ FETCH ERROR for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}):")
+                        logger.error(f"   Error Type: {error_type}")
+                        logger.error(f"   Error Message: {error_msg}")
+                        logger.error(f"   Symbol: {symbol_info.symbol}")
+                        logger.error(f"   Exchange: {symbol_info.exchange}")
+                        logger.error(f"   Instrument Type: {symbol_info.instrument_type}")
+                        logger.error(f"   Timeframe: {timeframe.value}")
+                        logger.error(f"   Date Range: {date_range_str}")
+                        logger.error(f"   Days in Range: {days_in_range}")
+                        
+                        # Check for specific broker API error patterns
+                        if "Error for chunk" in error_msg or "ERROR in data" in error_msg:
+                            logger.error(f"   🔍 BROKER API CHUNK ERROR DETECTED - This indicates broker API is failing to fetch data chunks")
+                            logger.error(f"   💡 Possible causes:")
+                            logger.error(f"      1. Symbol format mismatch for broker API")
+                            logger.error(f"      2. Exchange not properly handled by broker")
+                            logger.error(f"      3. Date range too large for broker API")
+                            logger.error(f"      4. Broker API rate limiting or service issues")
+                        
+                        # Re-raise to be handled by outer exception handler
+                        raise
                     
                     if candles:
                         # Calculate min/max timestamps from candles
@@ -607,13 +855,25 @@ class OpenAlgoHistoricalDataFetcher:
                         # The API only returns: timestamp, open, high, low, close, volume, oi
                         # We need to fetch spot price separately via quotes API
                         spot_price = None
-                        if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE]:
+                        if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE, 'CE', 'PE']:
                             logger.debug(f"Fetching underlying spot price for {symbol_info.symbol} via quotes API...")
                             spot_price = await self._fetch_underlying_spot_price(symbol_info)
+                            
+                            # If spot price is not available, use CLOSE price from latest candle as fallback
                             if spot_price is None or spot_price == 0:
-                                logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol}, Greeks calculation may be inaccurate")
+                                if candles and len(candles) > 0:
+                                    # Use the latest candle's CLOSE price as spot price fallback
+                                    latest_candle = candles[-1]  # Last candle (most recent)
+                                    spot_price = latest_candle.close
+                                    logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol}, using CLOSE price ({spot_price}) from latest candle as fallback for Greeks calculation")
+                                else:
+                                    logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol} and no candles available, Greeks calculation may be inaccurate")
+                                    spot_price = 0.0
                             else:
                                 logger.debug(f"✅ Fetched spot price for {symbol_info.symbol}: {spot_price}")
+                        
+                        # Get table name before storing (for logging)
+                        table_name = await self.questdb_client.table_manager.get_or_create_table(symbol_info)
                         
                         # Store in QuestDB
                         async with AsyncTimer(self.performance_monitor, f'store_{timeframe.value}'):
@@ -647,8 +907,8 @@ class OpenAlgoHistoricalDataFetcher:
                             records_inserted
                         )
                         
-                        # Log after saving: Success with records inserted, symbol, timeframe, date range
-                        logger.info(f"✅ Saved {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str} | Records: {records_inserted:,}")
+                        # Log after saving: Success with records inserted, symbol, timeframe, date range, table name
+                        logger.info(f"✅ Saved {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str} | Records: {records_inserted:,} | Table: {table_name}")
                     else:
                         # Track as failure - no data
                         logger.warning(f"⚠️ No data found for {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str}")
@@ -670,10 +930,29 @@ class OpenAlgoHistoricalDataFetcher:
             
             except Exception as e:
                 error_msg = str(e)
+                error_type = type(e).__name__
+                
+                # Enhanced error logging with full context
                 logger.exception(f"❌ Error fetching {symbol_info.symbol} ({timeframe.value}): {e}")
+                logger.error(f"   📋 Error Context:")
+                logger.error(f"      - Symbol: {symbol_info.symbol}")
+                logger.error(f"      - Exchange: {symbol_info.exchange}")
+                logger.error(f"      - Instrument Type: {symbol_info.instrument_type}")
+                logger.error(f"      - Token: {symbol_info.token}")
+                logger.error(f"      - Timeframe: {timeframe.value}")
+                logger.error(f"      - Date Range: {date_range_str}")
+                logger.error(f"      - Error Type: {error_type}")
+                logger.error(f"      - Error Message: {error_msg[:500]}")
+                
+                # Check for broker API chunk errors specifically
+                is_broker_chunk_error = "Error for chunk" in error_msg or "ERROR in data" in error_msg
+                if is_broker_chunk_error:
+                    logger.error(f"   🚨 BROKER API CHUNK ERROR - This is a broker API issue, not historical fetcher issue")
+                    logger.error(f"   📝 The broker API (Fyers/FivePaisa) is failing to fetch data chunks")
+                    logger.error(f"   🔍 Check broker API logs for detailed error messages")
                 
                 # Determine failure reason based on error type
-                if "rate limit" in error_msg.lower():
+                if "rate limit" in error_msg.lower() or "429" in error_msg:
                     failure_reason = FailureReason.RATE_LIMIT
                 elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
                     failure_reason = FailureReason.NETWORK_ERROR
@@ -681,7 +960,7 @@ class OpenAlgoHistoricalDataFetcher:
                     failure_reason = FailureReason.NETWORK_ERROR
                 elif "database" in error_msg.lower() or "questdb" in error_msg.lower() or "Invalid column" in error_msg:
                     failure_reason = FailureReason.DATABASE_ERROR
-                elif "api" in error_msg.lower():
+                elif is_broker_chunk_error or "api" in error_msg.lower():
                     failure_reason = FailureReason.API_ERROR
                 else:
                     failure_reason = FailureReason.UNKNOWN_ERROR
@@ -768,14 +1047,23 @@ class OpenAlgoHistoricalDataFetcher:
         last_fetch_date = await self.questdb_client.get_last_fetch_date(symbol_info, timeframe.value)
         
         # Calculate full date range first
+        # For options (CE/PE), use shorter historical period (3 months default)
+        # For other instruments, use full historical period (365 days default)
+        if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE]:
+            historical_days = self.settings.options_historical_days_limit
+            logger.debug(f"Using options historical days limit: {historical_days} days for {symbol_info.symbol}")
+        else:
+            historical_days = self.settings.historical_days_limit
+            logger.debug(f"Using standard historical days limit: {historical_days} days for {symbol_info.symbol}")
+        
         if self.settings.start_date_override:
             try:
                 full_start_date = datetime.strptime(self.settings.start_date_override, "%Y-%m-%d")
             except ValueError:
                 logger.warning(f"Invalid start_date_override: {self.settings.start_date_override}")
-                full_start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+                full_start_date = end_date - timedelta(days=historical_days)
         else:
-            full_start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+            full_start_date = end_date - timedelta(days=historical_days)
         
         # Decide between incremental and full fetch
         # IMPORTANT: Only do incremental if we have recent data AND the gap is small
@@ -788,7 +1076,13 @@ class OpenAlgoHistoricalDataFetcher:
             # Only do incremental if:
             # 1. Last fetch was recent (within 3 days)
             # 2. We already have most of the data (at least 90% of historical_days_limit)
-            if days_since_last_fetch <= 3 and days_covered >= (self.settings.historical_days_limit * 0.9):
+            # Use appropriate historical_days_limit based on instrument type
+            if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE]:
+                required_days_covered = (self.settings.options_historical_days_limit * 0.9)
+            else:
+                required_days_covered = (self.settings.historical_days_limit * 0.9)
+            
+            if days_since_last_fetch <= 3 and days_covered >= required_days_covered:
                 # Recent data exists and we have most data, do incremental fetch
                 start_date = last_fetch_date
             else:
@@ -800,25 +1094,66 @@ class OpenAlgoHistoricalDataFetcher:
         
         # Ensure start_date is not in the future and end_date is not in the future
         today_datetime = datetime.combine(datetime.now().date(), datetime.min.time())
+        original_end_date = end_date
+        original_start_date = start_date
+        
         if end_date > today_datetime:
             # End date should never be in the future
+            logger.warning(f"⚠️ End date {end_date.date()} is in the future for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}, {timeframe.value}). Adjusting to today {today_datetime.date()}")
             end_date = today_datetime
-            logger.warning(f"⚠️ Adjusted end_date to today for {symbol_info.symbol} ({timeframe.value})")
         
         if start_date > end_date:
-            start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+            logger.warning(f"⚠️ Start date {start_date.date()} is after end date {end_date.date()} for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}, {timeframe.value}). Adjusting start date.")
+            # Use appropriate historical_days_limit based on instrument type
+            if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE]:
+                start_date = end_date - timedelta(days=self.settings.options_historical_days_limit)
+            else:
+                start_date = end_date - timedelta(days=self.settings.historical_days_limit)
         
         # Ensure start_date is not in the future
         if start_date > today_datetime:
-            start_date = today_datetime - timedelta(days=self.settings.historical_days_limit)
-            logger.warning(f"⚠️ Adjusted start_date to avoid future date for {symbol_info.symbol} ({timeframe.value})")
+            # Use appropriate historical_days_limit based on instrument type
+            if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE]:
+                adjusted_days = self.settings.options_historical_days_limit
+            else:
+                adjusted_days = self.settings.historical_days_limit
+            logger.warning(f"⚠️ Start date {start_date.date()} is in the future for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}, {timeframe.value}). Adjusting to {today_datetime.date() - timedelta(days=adjusted_days)}")
+            start_date = today_datetime - timedelta(days=adjusted_days)
         
         # Calculate actual days in range
         actual_days = (end_date - start_date).days
         
+        # Log date range adjustments if any were made
+        if original_start_date != start_date or original_end_date != end_date:
+            logger.info(f"📅 Date range adjusted for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}):")
+            logger.info(f"   Original: {original_start_date.date()} to {original_end_date.date()}")
+            logger.info(f"   Adjusted: {start_date.date()} to {end_date.date()}")
+            logger.info(f"   Days: {actual_days}")
+        
         # Warn if range is too small
-        if actual_days < self.settings.historical_days_limit * 0.5:
-            logger.warning(f"⚠️ Date range for {symbol_info.symbol} ({timeframe.value}) is only {actual_days} days, expected ~{self.settings.historical_days_limit} days")
+        # Use appropriate historical_days_limit based on instrument type
+        if symbol_info.instrument_type in [InstrumentType.CE, InstrumentType.PE]:
+            expected_days = self.settings.options_historical_days_limit
+        else:
+            expected_days = self.settings.historical_days_limit
+        
+        if actual_days < expected_days * 0.5:
+            logger.warning(f"⚠️ Date range for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}, {timeframe.value}) is only {actual_days} days, expected ~{expected_days} days")
+        
+        # Warn if range is too large (may cause broker API issues)
+        if actual_days > 400:
+            logger.warning(f"⚠️ Date range for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}, {timeframe.value}) is very large: {actual_days} days. Broker API may chunk this into multiple requests.")
+        
+        # Final validation - ensure dates are valid
+        if start_date > end_date:
+            logger.error(f"❌ CRITICAL: Date range validation failed for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}): start_date {start_date.date()} > end_date {end_date.date()}")
+            # Return None to indicate invalid range
+            return None, None
+        
+        if start_date > today_datetime or end_date > today_datetime:
+            logger.error(f"❌ CRITICAL: Date range contains future dates for {symbol_info.symbol} ({symbol_info.exchange}, {symbol_info.instrument_type}): start={start_date.date()}, end={end_date.date()}, today={today_datetime.date()}")
+            # Return None to indicate invalid range
+            return None, None
         
         return start_date, end_date
     

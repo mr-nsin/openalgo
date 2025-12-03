@@ -150,6 +150,31 @@ class OpenAlgoZerodhaHistoricalFetcher:
                     self._interval_cache[timeframe_key] = self._get_zerodha_interval(timeframe)
                 zerodha_interval = self._interval_cache[timeframe_key]
                 
+                # ============================================================
+                # DETAILED LOGGING FOR API REQUEST
+                # ============================================================
+                logger.debug(f"🔍 API Request Details:")
+                logger.debug(f"   Symbol: {symbol}")
+                logger.debug(f"   Exchange: {exchange}")
+                logger.debug(f"   Instrument Type: {symbol_info.instrument_type}")
+                logger.debug(f"   Token: {symbol_info.token}")
+                logger.debug(f"   Timeframe: {timeframe.value} -> Zerodha Interval: {zerodha_interval}")
+                logger.debug(f"   Start Date: {from_str} ({from_date.strftime('%Y-%m-%d %H:%M:%S')})")
+                logger.debug(f"   End Date: {to_str} ({to_date.strftime('%Y-%m-%d %H:%M:%S')})")
+                logger.debug(f"   Days in Range: {(to_date - from_date).days}")
+                
+                # Validate dates before making API call
+                today = datetime.now().date()
+                from_date_only = from_date.date()
+                to_date_only = to_date.date()
+                
+                if from_date_only > today:
+                    logger.error(f"❌ VALIDATION ERROR: Start date {from_str} is in the future (today: {today})")
+                if to_date_only > today:
+                    logger.error(f"❌ VALIDATION ERROR: End date {to_str} is in the future (today: {today})")
+                if from_date_only > to_date_only:
+                    logger.error(f"❌ VALIDATION ERROR: Start date {from_str} is after end date {to_str}")
+                
                 
                 # 🔥 USE SAME SIMPLE APPROACH AS test_history_format.py
                 # Skip complex auth token logic and use OpenAlgo API client directly
@@ -530,6 +555,43 @@ class OpenAlgoSymbolManager:
             
             def fetch_symbols():
                 with db_session() as session:
+                    # ============================================================
+                    # MAP FETCHER TYPES TO DATABASE TYPES
+                    # ============================================================
+                    # Reverse mapping: fetcher types -> database types
+                    fetcher_to_db_types = {
+                        'CE': ['OPTSTK', 'OPTIDX', 'OPTCUR', 'OPTIRC', 'OPTBLN', 'OPTFUT'],
+                        'PE': ['OPTSTK', 'OPTIDX', 'OPTCUR', 'OPTIRC', 'OPTBLN', 'OPTFUT'],
+                        'FUT': ['FUTSTK', 'FUTIDX', 'FUTCUR', 'FUTIRC', 'FUTIRT', 'FUTCOM', 'FUTBAS', 'FUTBLN', 'FUTENR'],
+                        'EQ': ['EQ', 'UNDIRC', 'UNDCUR', 'UNDIRT', 'UNDIRD', 'COMDTY'],
+                        'INDEX': ['INDEX', 'AMXIDX']
+                    }
+                    
+                    # Build list of database instrument types to fetch
+                    db_instrument_types = []
+                    for enabled_type in self.settings.enabled_instrument_types:
+                        enabled_type = enabled_type.strip().upper()
+                        # If it's already a database type, use it directly
+                        if enabled_type in ['OPTSTK', 'OPTIDX', 'FUTSTK', 'FUTIDX', 'OPTCUR', 'OPTIRC', 
+                                           'FUTCUR', 'FUTIRC', 'FUTIRT', 'UNDIRC', 'UNDCUR', 'INDEX', 
+                                           'UNDIRT', 'UNDIRD', 'COMDTY', 'FUTCOM', 'OPTFUT', 'OPTBLN', 
+                                           'FUTBAS', 'FUTBLN', 'FUTENR', 'AMXIDX', 'EQ']:
+                            db_instrument_types.append(enabled_type)
+                        # If it's a fetcher type, map it to database types
+                        elif enabled_type in fetcher_to_db_types:
+                            db_instrument_types.extend(fetcher_to_db_types[enabled_type])
+                    
+                    # Remove duplicates while preserving order
+                    db_instrument_types = list(dict.fromkeys(db_instrument_types))
+                    
+                    if not db_instrument_types:
+                        logger.warning(f"⚠️ No database instrument types found for enabled types: {self.settings.enabled_instrument_types}")
+                        return []
+                    
+                    logger.info(f"📋 Mapping enabled types to database types:")
+                    logger.info(f"   Enabled: {self.settings.enabled_instrument_types}")
+                    logger.info(f"   Database types: {db_instrument_types}")
+                    
                     # 🔥 PRIORITIZE LIQUID STOCKS - Start with proven liquid NSE stocks
                     liquid_nse_stocks = [
                         'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK',
@@ -542,17 +604,18 @@ class OpenAlgoSymbolManager:
                     
                     # First, get liquid NSE stocks that we know work
                     liquid_query = session.query(SymToken).filter(
-                        SymToken.instrumenttype.in_(self.settings.enabled_instrument_types),
+                        SymToken.instrumenttype.in_(db_instrument_types),
                         SymToken.exchange == 'NSE',  # NSE only for liquid stocks
                         SymToken.symbol.in_(liquid_nse_stocks)
                     ).order_by(SymToken.symbol.asc())
                     
                     liquid_symbols = liquid_query.all()
                     
+                    logger.info(f"Instrument types: {db_instrument_types}, exchanges: {self.settings.enabled_exchanges}")
                     # 🔥 FETCH ALL SYMBOLS - No artificial limits!
                     # Get ALL symbols that match the criteria (instrument types and exchanges)
                     all_query = session.query(SymToken).filter(
-                        SymToken.instrumenttype.in_(self.settings.enabled_instrument_types),
+                        SymToken.instrumenttype.in_(db_instrument_types),
                         SymToken.exchange.in_(self.settings.enabled_exchanges),
                         # 🔥 EXCLUDE ETF/NAV SYMBOLS that have limited historical data
                         ~SymToken.symbol.like('%NAV%'),
@@ -585,8 +648,47 @@ class OpenAlgoSymbolManager:
                 
                 for symbol in batch:
                     # Categorize by instrument type first
-                    instrument_type = symbol.instrumenttype
+                    db_instrument_type = symbol.instrumenttype
                     exchange = symbol.exchange
+                    
+                    # ============================================================
+                    # MAP DATABASE INSTRUMENT TYPES TO FETCHER TYPES
+                    # ============================================================
+                    # Map database instrument types to fetcher's expected types
+                    instrument_type_map = {
+                        # Options
+                        'OPTSTK': 'CE',  # Stock options (will be categorized as CE or PE based on symbol)
+                        'OPTIDX': 'CE',  # Index options (will be categorized as CE or PE based on symbol)
+                        'OPTCUR': 'CE',  # Currency options
+                        'OPTIRC': 'CE',  # Interest rate options
+                        'OPTBLN': 'CE',  # Bullion options
+                        'OPTFUT': 'CE',  # Futures options
+                        # Futures
+                        'FUTSTK': 'FUT',  # Stock futures
+                        'FUTIDX': 'FUT',  # Index futures
+                        'FUTCUR': 'FUT',  # Currency futures
+                        'FUTIRC': 'FUT',  # Interest rate futures
+                        'FUTIRT': 'FUT',  # Interest rate futures (alternative)
+                        'FUTCOM': 'FUT',  # Commodity futures
+                        'FUTBAS': 'FUT',  # Base futures
+                        'FUTBLN': 'FUT',  # Bullion futures
+                        'FUTENR': 'FUT',  # Energy futures
+                        # Equities
+                        'EQ': 'EQ',  # Equities (already correct)
+                        # Index
+                        'INDEX': 'INDEX',  # Index (already correct)
+                        'AMXIDX': 'INDEX',  # AMX Index
+                        # Underlyings
+                        'UNDIRC': 'EQ',  # Interest rate underlying
+                        'UNDCUR': 'EQ',  # Currency underlying
+                        'UNDIRT': 'EQ',  # Interest rate underlying (alternative)
+                        'UNDIRD': 'EQ',  # Interest rate underlying (alternative)
+                        # Commodities
+                        'COMDTY': 'EQ',  # Commodity
+                    }
+                    
+                    # Map database instrument type to fetcher type
+                    instrument_type = instrument_type_map.get(db_instrument_type, db_instrument_type)
                     
                     # CRITICAL: Check exchange first to identify INDEX symbols
                     # INDEX symbols have exchange='NSE_INDEX' or 'BSE_INDEX' (even if instrumenttype='EQ')
@@ -594,11 +696,24 @@ class OpenAlgoSymbolManager:
                     if exchange in ['NSE_INDEX', 'BSE_INDEX']:
                         instrument_type = 'INDEX'  # Override to INDEX for proper table schema
                     
-                    # Create symbol info object with corrected instrument_type
+                    # For options, determine if it's CE or PE based on symbol suffix
+                    if instrument_type == 'CE' and db_instrument_type in ['OPTSTK', 'OPTIDX', 'OPTCUR', 'OPTIRC', 'OPTBLN', 'OPTFUT']:
+                        # Check if symbol ends with CE or PE
+                        symbol_upper = symbol.symbol.upper()
+                        if symbol_upper.endswith('PE'):
+                            instrument_type = 'PE'
+                        elif symbol_upper.endswith('CE'):
+                            instrument_type = 'CE'
+                        else:
+                            # If we can't determine, default to CE and log warning
+                            logger.debug(f"Could not determine option type (CE/PE) for {symbol.symbol}, defaulting to CE")
+                            instrument_type = 'CE'
+                    
+                    # Create symbol info object with mapped instrument_type
                     symbol_info = SymbolInfo(
                         symbol=symbol.symbol,
                         exchange=symbol.exchange,
-                        instrument_type=instrument_type,  # Use corrected type
+                        instrument_type=instrument_type,  # Use mapped type
                         token=symbol.token,
                         name=symbol.name,
                         expiry=symbol.expiry,
@@ -621,7 +736,7 @@ class OpenAlgoSymbolManager:
                         symbols_by_type[instrument_type].append(symbol_info)
                     else:
                         # Unknown instrument type, log for debugging
-                        logger.debug(f"Unknown instrument type: {instrument_type} for symbol {symbol.symbol} (exchange: {exchange})")
+                        logger.debug(f"Unknown instrument type: {db_instrument_type} (mapped to: {instrument_type}) for symbol {symbol.symbol} (exchange: {exchange})")
                 
                 # Yield control periodically
                 if i % (batch_size * 5) == 0:

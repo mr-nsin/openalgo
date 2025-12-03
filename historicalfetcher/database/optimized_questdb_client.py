@@ -496,18 +496,8 @@ class OptimizedQuestDBClient:
         # For now, use basic insertion for futures until full implementation
         return await self._insert_enhanced_equity_data(table_name, indicator_results)
     
-    async def _insert_enhanced_options_data(
-        self,
-        table_name: str,
-        indicator_results: List[IndicatorResult]
-    ) -> int:
-        """Insert enhanced options data - simplified for now"""
-        # For now, use basic insertion for options until full implementation
-        return await self._insert_enhanced_equity_data(table_name, indicator_results)
-    
-    # Note: This function is replaced by the full implementation below
-    # Keeping for backward compatibility but it should not be called
-    # async def _insert_enhanced_index_data(...) - See full implementation below
+    # Note: _insert_enhanced_options_data is defined below with full implementation
+    # that includes symbol_info parameter for options-specific data
     
     async def _insert_enhanced_equity_data(
         self,
@@ -739,8 +729,9 @@ class OptimizedQuestDBClient:
         insert_data = []
         
         # Extract options-specific data from symbol_info
-        contract_token = symbol_info.contract_token or symbol_info.symbol
-        option_type = 1 if symbol_info.instrument_type == InstrumentType.CALL_OPTION else 2  # 1=CE, 2=PE
+        # Use token if available, otherwise use symbol as contract_token
+        contract_token = symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol
+        option_type = 1 if symbol_info.instrument_type in [InstrumentType.CALL_OPTION, 'CE'] else 2  # 1=CE, 2=PE
         strike_int = int((symbol_info.strike or 0) * 100)  # Strike * 100 for precision
         
         # Log Greeks status for first result
@@ -928,22 +919,21 @@ class OptimizedQuestDBClient:
                 $16, $17, $18, $19,
                 $20, $21, $22,
                 $23, $24, $25, $26, $27, $28,
-                $26, $27, $28,
-                $29, $30, $31, $32, $33, $34,
-                $35, $36, $37, $38, $39, $40,
-                $41, $42, $43, $44, $45, $46, $47, $48,
-                $49, $50, $51, $52, $53, $54,
-                $55, $56, $57, $58, $59,
-                $60, $61, $62,
-                $63, $64, $65, $66, $67,
-                $68, $69, $70, $71,
-                $72, $73, $74, $75, $76, $77,
-                $78, $79, $80, $81, $82, $83, $84, $85, $86, $87,
-                $88, $89, $90, $91, $92, $93, $94, $95, $96, $97,
-                $98, $99, $100, $101, $102,
-                $103, $104, $105,
-                $106, $107, $108, $109, $110, $111,
-                $112
+                $29, $30, $31,
+                $32, $33, $34, $35, $36, $37,
+                $38, $39, $40, $41, $42, $43, $44, $45,
+                $46, $47, $48, $49, $50, $51,
+                $52, $53, $54, $55, $56,
+                $57, $58, $59,
+                $60, $61, $62, $63, $64,
+                $65, $66, $67, $68,
+                $69, $70, $71, $72, $73, $74,
+                $75, $76, $77, $78, $79, $80, $81, $82, $83, $84,
+                $85, $86, $87, $88, $89, $90, $91, $92, $93, $94,
+                $95, $96, $97, $98, $99,
+                $100, $101, $102,
+                $103, $104, $105, $106, $107, $108,
+                $109
             )
         """
         
@@ -951,12 +941,70 @@ class OptimizedQuestDBClient:
             return await self._execute_batch_insert(insert_query, insert_data, table_name)
         except Exception as e:
             error_str = str(e)
-            if "Invalid column" in error_str or "column" in error_str.lower():
+            error_type = type(e).__name__
+            
+            # Check for column-related errors: invalid column, column count mismatch, or row value count mismatch
+            is_column_error = (
+                "Invalid column" in error_str or 
+                "column" in error_str.lower() or 
+                "row value count" in error_str.lower() or 
+                "value count does not match" in error_str.lower() or
+                "does not match column count" in error_str.lower() or
+                "UnknownPostgresError" in error_type  # QuestDB/PostgreSQL errors often indicate schema issues
+            )
+            
+            if is_column_error:
                 # Table has old schema - try to add missing columns first
                 logger.warning(f"Table {table_name} (OPTIONS) has old schema (missing columns), attempting to add missing columns...")
+                logger.warning(f"Error type: {error_type}, Error message: {error_str}")
                 
                 # Get required columns for OPTIONS type (includes Greeks)
                 required_columns = self._get_required_columns_for_instrument('CE')  # Use CE for options columns
+                
+                # Extract column names from INSERT query to ensure we have ALL columns
+                # The INSERT query format is: INSERT INTO table_name (col1, col2, ...) VALUES (...)
+                import re
+                # Match the column list between the first parentheses after INSERT INTO
+                insert_match = re.search(r'INSERT INTO\s+\S+\s*\(\s*([^)]+)\s*\)', insert_query, re.IGNORECASE | re.DOTALL)
+                if insert_match:
+                    # Split by comma and clean up whitespace/newlines
+                    insert_columns_raw = insert_match.group(1)
+                    insert_columns = [col.strip() for col in re.split(r',\s*\n?\s*', insert_columns_raw) if col.strip()]
+                    logger.info(f"INSERT query has {len(insert_columns)} columns")
+                    
+                    # Add any missing columns from INSERT query to required_columns
+                    # Map column names to types (use defaults if not in required_columns)
+                    column_type_map = {
+                        'SYMBOL': ['contract_token', 'tf'],
+                        'BYTE': ['option_type', 'supertrend_signal_7_3', 'supertrend_signal_10_3', 
+                                'volume_divergence_confirmed', 'price_volume_divergence_type'],
+                        'INT': ['strike'],
+                        'LONG': ['volume', 'oi', 'obv', 'bid_qty_1', 'bid_qty_2', 'bid_qty_3', 'bid_qty_4', 'bid_qty_5',
+                                'ask_qty_1', 'ask_qty_2', 'ask_qty_3', 'ask_qty_4', 'ask_qty_5', 
+                                'total_bid_qty', 'total_ask_qty', 'oi_change'],
+                        'TIMESTAMP': ['timestamp']
+                    }
+                    
+                    missing_from_required = []
+                    for col in insert_columns:
+                        if col not in required_columns:
+                            # Determine type based on column name patterns
+                            col_type = 'DOUBLE'  # Default for most columns
+                            for type_name, patterns in column_type_map.items():
+                                if isinstance(patterns, list) and col in patterns:
+                                    col_type = type_name
+                                    break
+                            
+                            required_columns[col] = col_type
+                            missing_from_required.append((col, col_type))
+                    
+                    if missing_from_required:
+                        logger.warning(f"Added {len(missing_from_required)} missing columns from INSERT query to required_columns: {missing_from_required[:5]}..." + (f" and {len(missing_from_required)-5} more" if len(missing_from_required) > 5 else ""))
+                else:
+                    logger.warning(f"Could not parse INSERT query to extract column names")
+                    insert_columns = []
+                
+                logger.info(f"Required columns count: {len(required_columns)} (INSERT query: {len(insert_columns) if insert_columns else 'unknown'})")
                 
                 # Try to add missing columns
                 # Create a dummy symbol_info for options
@@ -964,7 +1012,8 @@ class OptimizedQuestDBClient:
                 dummy_symbol_info = SymbolInfo(
                     symbol=table_name,
                     exchange='NFO',
-                    instrument_type=InstrumentType.CALL_OPTION
+                    instrument_type=InstrumentType.CALL_OPTION,
+                    token=symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else table_name
                 )
                 
                 columns_added = await self._add_missing_columns(table_name, dummy_symbol_info, required_columns)
@@ -989,13 +1038,24 @@ class OptimizedQuestDBClient:
         """Get list of columns that exist in the table by trying to query it"""
         try:
             async with self.pool.acquire() as conn:
-                # Try to get one row to see what columns exist
+                # First, try to use QuestDB's table_columns() function if available
+                try:
+                    # QuestDB has a table_columns() function to get column metadata
+                    result = await conn.fetch(f"SELECT column FROM table_columns('{table_name}')")
+                    if result:
+                        columns = {row['column'] for row in result}
+                        logger.debug(f"Detected {len(columns)} columns in {table_name} via table_columns(): {sorted(columns)}")
+                        return columns
+                except Exception as e:
+                    logger.debug(f"table_columns() not available or failed for {table_name}: {e}")
+                
+                # Fallback: Try to get one row to see what columns exist
                 # Even if table is empty, this will return column names
                 try:
                     result = await conn.fetchrow(f"SELECT * FROM {table_name} LIMIT 1")
                     if result:
                         columns = set(result.keys())
-                        logger.debug(f"Detected {len(columns)} columns in {table_name}: {sorted(columns)}")
+                        logger.debug(f"Detected {len(columns)} columns in {table_name} via SELECT: {sorted(columns)}")
                         return columns
                 except Exception as query_error:
                     # If table is empty, try to check if it exists by attempting a count query
@@ -1009,19 +1069,32 @@ class OptimizedQuestDBClient:
                             result = await conn.fetchrow(f"SELECT * FROM {table_name} WHERE false")
                             if result:
                                 columns = set(result.keys())
-                                logger.debug(f"Detected {len(columns)} columns in empty table {table_name}")
+                                logger.debug(f"Detected {len(columns)} columns in empty table {table_name} via WHERE false")
+                                return columns
+                        except:
+                            pass
+                        # If that doesn't work, try to get columns from a metadata query
+                        try:
+                            # Try using INFORMATION_SCHEMA or similar if available
+                            result = await conn.fetch(f"""
+                                SELECT column_name FROM information_schema.columns 
+                                WHERE table_name = '{table_name}'
+                            """)
+                            if result:
+                                columns = {row['column_name'] for row in result}
+                                logger.debug(f"Detected {len(columns)} columns in {table_name} via information_schema")
                                 return columns
                         except:
                             pass
                         # If that doesn't work, return empty set to trigger column addition
-                        logger.debug(f"Table {table_name} exists but column detection failed, will add missing columns")
+                        logger.warning(f"Table {table_name} exists but column detection failed, will add missing columns")
                         return set()  # Return empty to trigger column addition
                     except:
                         # Table doesn't exist
                         logger.debug(f"Table {table_name} does not exist")
                         return set()
         except Exception as e:
-            logger.debug(f"Could not get columns for table {table_name}: {e}")
+            logger.warning(f"Could not get columns for table {table_name}: {e}")
             # Return empty set - will use all columns for new table or trigger column addition
             return set()
     
@@ -1044,8 +1117,36 @@ class OptimizedQuestDBClient:
         columns.update(IndicatorColumnDefinitions.MOMENTUM_INDICATORS)
         columns.update(IndicatorColumnDefinitions.VOLATILITY_INDICATORS)
         columns.update(IndicatorColumnDefinitions.TREND_FOLLOWING)
+        columns.update(IndicatorColumnDefinitions.VOLUME_INDICATORS)  # volume_sma_20, vwap, obv, mfi_14, twap
         columns.update(IndicatorColumnDefinitions.MARKET_DEPTH)
         columns.update(IndicatorColumnDefinitions.DERIVED_MARKET_DATA)
+        
+        # Volume Profile columns (not in IndicatorColumnDefinitions)
+        volume_profile_columns = {
+            'volume_profile_poc': 'DOUBLE',
+            'volume_profile_vah': 'DOUBLE',
+            'volume_profile_val': 'DOUBLE',
+            'volume_profile_balance': 'DOUBLE',
+        }
+        columns.update(volume_profile_columns)
+        
+        # Volume Divergence columns (not in IndicatorColumnDefinitions)
+        volume_divergence_columns = {
+            'volume_price_divergence': 'DOUBLE',
+            'volume_divergence_strength': 'DOUBLE',
+            'volume_divergence_confirmed': 'BYTE',
+            'rsi_volume_divergence': 'DOUBLE',
+            'macd_volume_divergence': 'DOUBLE',
+            'price_volume_divergence_type': 'BYTE',
+        }
+        columns.update(volume_divergence_columns)
+        
+        # Change metrics (price_change, price_change_pct might be in DERIVED_MARKET_DATA, but ensure they're there)
+        change_metrics = {
+            'price_change': 'DOUBLE',
+            'price_change_pct': 'DOUBLE',
+        }
+        columns.update(change_metrics)
         
         # Additional columns that might be missing
         # Ichimoku columns
@@ -1084,8 +1185,44 @@ class OptimizedQuestDBClient:
         
         # Options-specific columns
         if instrument_type in ['CE', 'PE']:
+            # Base options columns (should already exist, but include for completeness)
+            base_options_columns = {
+                'contract_token': 'SYMBOL',
+                'option_type': 'BYTE',
+                'strike': 'INT',
+                'tf': 'SYMBOL',
+                'open': 'DOUBLE',
+                'high': 'DOUBLE',
+                'low': 'DOUBLE',
+                'close': 'DOUBLE',
+                'volume': 'LONG',
+                'oi': 'LONG',
+            }
+            columns.update(base_options_columns)
+            
+            # Options Greeks
             columns.update(IndicatorColumnDefinitions.OPTIONS_GREEKS)
+            
+            # Options Analytics
             columns.update(IndicatorColumnDefinitions.OPTIONS_ANALYTICS)
+            
+            # Options-specific change metrics (from INSERT query)
+            options_change_metrics = {
+                'oi_change': 'LONG',
+                'oi_change_pct': 'DOUBLE',
+                'iv_change': 'DOUBLE',
+                'delta_change': 'DOUBLE',
+            }
+            columns.update(options_change_metrics)
+            
+            # Options-specific market data (from INSERT query)
+            options_market_data = {
+                'put_call_ratio': 'DOUBLE',
+                'max_pain_distance': 'DOUBLE',
+                'skew': 'DOUBLE',
+                'max_pain': 'DOUBLE',  # Already in OPTIONS_ANALYTICS but ensure it's there
+            }
+            columns.update(options_market_data)
         
         return columns
     
@@ -1103,6 +1240,8 @@ class OptimizedQuestDBClient:
         """
         try:
             existing_columns = await self._get_table_columns(table_name)
+            logger.debug(f"Table {table_name} has {len(existing_columns)} existing columns")
+            
             if not existing_columns:
                 logger.warning(f"Cannot add columns to {table_name}: table doesn't exist or columns cannot be detected")
                 return False
@@ -1110,9 +1249,14 @@ class OptimizedQuestDBClient:
             missing_columns = {col: col_type for col, col_type in required_columns.items() if col not in existing_columns}
             
             if not missing_columns:
+                logger.info(f"All required columns already exist in {table_name} (existing: {len(existing_columns)}, required: {len(required_columns)})")
                 return True  # All columns already exist
             
-            logger.info(f"Adding {len(missing_columns)} missing columns to {table_name}: {list(missing_columns.keys())}")
+            logger.warning(f"Table {table_name} is missing {len(missing_columns)} columns out of {len(required_columns)} required")
+            logger.info(f"Adding {len(missing_columns)} missing columns to {table_name}: {list(missing_columns.keys())[:10]}..." + (f" and {len(missing_columns)-10} more" if len(missing_columns) > 10 else ""))
+            
+            added_count = 0
+            failed_count = 0
             
             async with self.pool.acquire() as conn:
                 for col_name, col_type in missing_columns.items():
@@ -1120,19 +1264,28 @@ class OptimizedQuestDBClient:
                         # QuestDB ALTER TABLE syntax
                         alter_query = f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type}"
                         await conn.execute(alter_query)
-                        logger.debug(f"Added column {col_name} ({col_type}) to {table_name}")
+                        added_count += 1
+                        logger.debug(f"✅ Added column {col_name} ({col_type}) to {table_name}")
                     except Exception as e:
                         # Column might already exist (race condition) or invalid type
-                        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
-                            logger.debug(f"Column {col_name} already exists in {table_name}")
+                        error_str = str(e).lower()
+                        if "already exists" in error_str or "duplicate" in error_str:
+                            logger.debug(f"Column {col_name} already exists in {table_name} (race condition)")
+                            added_count += 1  # Count as success
                         else:
-                            logger.warning(f"Failed to add column {col_name} to {table_name}: {e}")
+                            failed_count += 1
+                            logger.warning(f"❌ Failed to add column {col_name} ({col_type}) to {table_name}: {e}")
                             # Continue with other columns
             
-            return True
+            logger.info(f"Column addition summary for {table_name}: {added_count} added, {failed_count} failed, {len(missing_columns)} total missing")
+            
+            # Return True if at least some columns were added (or all were already there)
+            return added_count > 0 or failed_count == 0
             
         except Exception as e:
             logger.error(f"Error adding missing columns to {table_name}: {e}")
+            import traceback
+            logger.debug(f"Traceback: {traceback.format_exc()}")
             return False
     
     async def _insert_enhanced_index_data(self, table_name: str, symbol_info: SymbolInfo, indicator_results: List[IndicatorResult]) -> int:
@@ -1426,7 +1579,7 @@ class OptimizedQuestDBClient:
         insert_data = []
         for candle in candles:
             insert_data.append((
-                symbol_info.instrument_token,  # Contract-specific token
+                symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol,  # Contract-specific token
                 expiry_date,
                 tf_string,
                 candle.open,
@@ -1458,15 +1611,18 @@ class OptimizedQuestDBClient:
         tf_string = TimeFrameCode.to_string(tf_code)
         
         # Convert option type to numeric (1=CE, 2=PE)
-        option_type_code = 1 if symbol_info.instrument_type == InstrumentType.CALL_OPTION else 2
+        option_type_code = 1 if symbol_info.instrument_type in [InstrumentType.CALL_OPTION, 'CE'] else 2
         
         # Convert strike to integer (multiply by 100 for precision)
         strike_int = int((symbol_info.strike or 0) * 100)
         
+        # Use token if available, otherwise use symbol as contract_token
+        contract_token = symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol
+        
         insert_data = []
         for candle in candles:
             insert_data.append((
-                symbol_info.instrument_token,  # Contract-specific token
+                contract_token,  # Contract-specific token
                 option_type_code,              # Numeric option type
                 strike_int,                    # Integer strike
                 tf_string,
@@ -1844,7 +2000,7 @@ class OptimizedQuestDBClient:
                 """, 
                     symbol_info.symbol,
                     symbol_info.exchange,
-                    str(symbol_info.token),
+                    symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol,  # instrument_token
                     symbol_info.instrument_type,
                     timeframe,
                     now,

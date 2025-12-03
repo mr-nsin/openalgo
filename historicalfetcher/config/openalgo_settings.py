@@ -97,6 +97,26 @@ class OpenAlgoSettings(BaseSettings):
     historical_days_limit: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_HISTORICAL_DAYS_LIMIT', '365')))
     start_date_override: Optional[str] = Field(default_factory=lambda: os.getenv('HIST_FETCHER_START_DATE_OVERRIDE'))
     
+    # Options-specific Configuration
+    # Historical data limit for options (CE/PE) - Default to 3 months (~90 days)
+    # This controls how far back historical data is fetched for options strikes
+    options_historical_days_limit: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_OPTIONS_HISTORICAL_DAYS_LIMIT', '90')))
+    # Number of nearest expiries to fetch for options - Default to 5
+    # Only options with these 5 nearest expiry dates will be processed
+    options_max_expiries: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_OPTIONS_MAX_EXPIRIES', '5')))
+    
+    # Options Underlying Filter Configuration
+    # Allowed option underlyings for CE/PE fetching (comma-separated)
+    # Default: NIFTY, BANKNIFTY, SENSEX, FINNIFTY (major indices)
+    # Set to empty string or '*' to fetch all underlyings
+    options_allowed_underlyings: List[str] = Field(
+        default_factory=lambda: [u.strip().upper() for u in os.getenv('HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS', 'NIFTY,BANKNIFTY,SENSEX,FINNIFTY').split(',') if u.strip()] if os.getenv('HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS', 'NIFTY,BANKNIFTY,SENSEX,FINNIFTY') not in ['', '*', 'ALL'] else []
+    )
+    # Whether to fetch only allowed underlyings or all underlyings
+    # If True: only fetch CE/PE for underlyings in options_allowed_underlyings
+    # If False: fetch all CE/PE options (ignore options_allowed_underlyings)
+    options_filter_by_underlying: bool = Field(default_factory=lambda: os.getenv('HIST_FETCHER_OPTIONS_FILTER_BY_UNDERLYING', 'true').lower() == 'true')
+    
     # Notification Configuration (reuse OpenAlgo's notification system)
     telegram_bot_token: Optional[str] = Field(default_factory=lambda: os.getenv('TELEGRAM_BOT_TOKEN'))
     telegram_chat_ids: List[str] = Field(

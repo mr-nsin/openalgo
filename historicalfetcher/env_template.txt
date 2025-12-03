@@ -40,8 +40,14 @@ HIST_FETCHER_QUESTDB_DATABASE=qdb
 HIST_FETCHER_ENABLED_TIMEFRAMES=1m,3m,5m,15m,30m,1h,D
 
 # Instrument types to fetch (comma-separated)
-# Supported: EQ, FUT, CE, PE, INDEX
-HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=EQ,FUT,CE,PE,INDEX
+# Database instrument types that will be mapped to fetcher types:
+#   Options: OPTSTK, OPTIDX, OPTCUR, OPTIRC, OPTBLN, OPTFUT -> CE/PE
+#   Futures: FUTSTK, FUTIDX, FUTCUR, FUTIRC, FUTIRT, FUTCOM, FUTBAS, FUTBLN, FUTENR -> FUT
+#   Equities: EQ, UNDIRC, UNDCUR, UNDIRT, UNDIRD, COMDTY -> EQ
+#   Index: INDEX, AMXIDX -> INDEX
+# You can specify either database types or fetcher types (CE, PE, FUT, EQ, INDEX)
+# Recommended: Include all database types you want to fetch
+HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=OPTSTK,OPTIDX,FUTSTK,FUTIDX,OPTCUR,OPTIRC,FUTCUR,FUTIRC,FUTIRT,UNDIRC,UNDCUR,INDEX,UNDIRT,UNDIRD,COMDTY,FUTCOM,OPTFUT,OPTBLN,FUTBAS,FUTBLN,FUTENR,AMXIDX,EQ
 
 # Exchanges to include (comma-separated)
 # IMPORTANT: NSE_INDEX and BSE_INDEX must be included for index symbols (NIFTY, BANKNIFTY, SENSEX, etc.)
@@ -49,7 +55,37 @@ HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=EQ,FUT,CE,PE,INDEX
 HIST_FETCHER_ENABLED_EXCHANGES=NSE_INDEX,BSE_INDEX,NSE,BSE,NFO,BFO
 
 # Historical data range (days from today)
+# Default: 365 days (1 year) for equities, futures, and indices
 HIST_FETCHER_HISTORICAL_DAYS_LIMIT=365
+
+# Options-specific historical data range (days back from today)
+# Default: 90 days (3 months) for CE/PE options
+# This controls how far back historical data is fetched for options strikes
+# Example: If today is 2024-11-28, it will fetch data from 2024-08-30 to 2024-11-28
+HIST_FETCHER_OPTIONS_HISTORICAL_DAYS_LIMIT=90
+
+# Options expiry filtering configuration
+# Maximum number of nearest expiries to fetch for options (CE/PE)
+# Default: 5 (only process options with the 5 nearest expiry dates)
+# Example: If today is 2024-11-28 and expiries are [2024-11-28, 2024-12-05, 2024-12-12, 2024-12-19, 2024-12-26, 2025-01-02, ...]
+#          Only options with the first 5 expiry dates will be processed
+HIST_FETCHER_OPTIONS_MAX_EXPIRIES=5
+
+# Options underlying filtering configuration
+# Allowed option underlyings for CE/PE fetching (comma-separated, case-insensitive)
+# Default: NIFTY,BANKNIFTY,SENSEX,FINNIFTY (major indices)
+# Set to empty string, '*', or 'ALL' to fetch all underlyings (when HIST_FETCHER_OPTIONS_FILTER_BY_UNDERLYING=false)
+# Examples:
+#   HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS=NIFTY,BANKNIFTY,SENSEX,FINNIFTY  (only these 4)
+#   HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS=NIFTY,BANKNIFTY  (only NIFTY and BANKNIFTY)
+#   HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS=  (empty - will fetch all if filter is disabled)
+HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS=NIFTY,BANKNIFTY,SENSEX,FINNIFTY
+
+# Whether to filter CE/PE options by allowed underlyings
+# true: Only fetch CE/PE for underlyings in HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS
+# false: Fetch all CE/PE options (ignore HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS)
+# Default: true (only fetch specified underlyings)
+HIST_FETCHER_OPTIONS_FILTER_BY_UNDERLYING=true
 
 # Optional: Override start date (YYYY-MM-DD format)
 # If set, this overrides HISTORICAL_DAYS_LIMIT
