@@ -468,6 +468,20 @@ app = create_app()
 # Explicitly call the setup environment function
 setup_environment(app)
 
+# Restore caches from database on startup (enables restart without re-login)
+with app.app_context():
+    try:
+        from database.cache_restoration import restore_all_caches
+        cache_result = restore_all_caches()
+
+        if cache_result['success']:
+            symbol_count = cache_result['symbol_cache'].get('symbols_loaded', 0)
+            auth_count = cache_result['auth_cache'].get('tokens_loaded', 0)
+            if symbol_count > 0 or auth_count > 0:
+                logger.info(f"Cache restoration: {symbol_count} symbols, {auth_count} auth tokens")
+    except Exception as e:
+        logger.debug(f"Cache restoration skipped: {e}")
+
 # Auto-start execution engine and squareoff scheduler if in analyzer mode (parallel startup)
 with app.app_context():
     try:
@@ -545,6 +559,31 @@ if __name__ == '__main__':
     ws_port = int(os.getenv('WEBSOCKET_PORT', 8765))  # WebSocket port
     debug = os.getenv('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')  # Default to False if not set
 
+    # Start ngrok tunnel if enabled
+    ngrok_tunnel = None
+    ngrok_url = None
+    if os.getenv('NGROK_ALLOW', 'FALSE').upper() == 'TRUE':
+        try:
+            from pyngrok import ngrok, conf
+            from urllib.parse import urlparse
+
+            # Extract domain from HOST_SERVER if provided
+            host_server_env = os.getenv('HOST_SERVER', '')
+            if host_server_env:
+                parsed = urlparse(host_server_env)
+                domain = parsed.netloc or parsed.path
+                # Start ngrok with the custom domain
+                ngrok_tunnel = ngrok.connect(port, domain=domain)
+            else:
+                # Start ngrok without custom domain
+                ngrok_tunnel = ngrok.connect(port)
+
+            ngrok_url = ngrok_tunnel.public_url
+            print(f"Ngrok tunnel established: {ngrok_url}")
+        except Exception as e:
+            print(f"Failed to start ngrok tunnel: {e}")
+            ngrok_url = None
+
     # Clean startup banner
     import socket
 
@@ -565,6 +604,9 @@ if __name__ == '__main__':
     web_url = f"http://{display_ip}:{port}"
     ws_url = f"ws://{display_ip}:{ws_port}"
     docs_url = "https://docs.openalgo.in"
+
+    # Use ngrok URL if tunnel was established
+    host_server = ngrok_url if ngrok_url else ''
 
     # ANSI color codes
     GREEN = "\033[92m"
@@ -598,6 +640,9 @@ if __name__ == '__main__':
         f"{WHITE}Docs{RESET}       {YELLOW}{docs_url}{RESET}",
         f"{WHITE}Status{RESET}     {GREEN}{BOLD}Ready{RESET}",
     ]
+    # Add Host URL to samples if ngrok is enabled (for width calculation)
+    if host_server:
+        content_samples.insert(5, f"{WHITE}Host URL{RESET}   {GREEN}{host_server}{RESET}")
 
     inner_target = max(MIN_WIDTH - 4, max((visible_len(text) for text in content_samples), default=0))
     W = max(inner_target + 4, len(title) + 5)
@@ -636,6 +681,8 @@ if __name__ == '__main__':
     print(mkline(f"{WHITE}{BOLD}Endpoints{RESET}"))
     print(mkline(f"{WHITE}Web App{RESET}    {CYAN}{web_url}{RESET}"))
     print(mkline(f"{WHITE}WebSocket{RESET}  {MAGENTA}{ws_url}{RESET}"))
+    if host_server:
+        print(mkline(f"{WHITE}Host URL{RESET}   {GREEN}{host_server}{RESET}"))
     print(mkline(f"{WHITE}Docs{RESET}       {YELLOW}{docs_url}{RESET}"))
     print(mkline())
     print(mkline(f"{WHITE}Status{RESET}     {GREEN}{BOLD}Ready{RESET}"))
