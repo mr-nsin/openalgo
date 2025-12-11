@@ -8,15 +8,15 @@ import pandas as pd
 from datetime import datetime, timedelta
 
 # Test the history API to see the response format
-client = api(api_key="56c3dc6ba7d9c9df478e4f19ffc5d3e15e1dd91b5aa11e91c910f202c91eff9d", host="http://127.0.0.1:5000")
+client = api(api_key="6c57bddad9003ec3e7744136ae723b750bf1ac71bfe4f6dee0c162aac5579f42", host="http://127.0.0.1:5000")
 
 # Get history data
 end_date = datetime.now()
 start_date = end_date - timedelta(days=5)
 
 response = client.history(
-    symbol="RELIANCE",
-    exchange="NSE",
+    symbol="BANKNIFTY24FEB2651500CE",
+    exchange="NFO",
     interval="5m",
     start_date=start_date.strftime("%Y-%m-%d"),
     end_date=end_date.strftime("%Y-%m-%d")
@@ -29,7 +29,7 @@ if isinstance(response, pd.DataFrame):
     print("Shape:", response.shape)
     print("Columns:", list(response.columns))
     print("\nFirst 5 rows:")
-    print(response.head())
+    print(response)
 elif isinstance(response, dict):
     print("\nResponse is a dictionary with keys:", response.keys())
     if 'data' in response:

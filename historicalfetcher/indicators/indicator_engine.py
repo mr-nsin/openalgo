@@ -33,7 +33,13 @@ class InstrumentType(str, Enum):
     CALL_OPTION = "CE"
     PUT_OPTION = "PE"
     INDEX = "INDEX"
-from historicalfetcher.indicators.numba_indicators import NumbaIndicators
+
+# Import NumbaIndicators with fallback
+try:
+    from historicalfetcher.indicators.numba_indicators import NumbaIndicators
+except ImportError:
+    # Use fallback from __init__.py
+    from historicalfetcher.indicators import NumbaIndicators
 
 # Initialize IV availability flag
 _IV_AVAILABLE = False
@@ -63,20 +69,136 @@ try:
             def implied_volatility_newton_raphson(*args, **kwargs):
                 return 0.2  # Default IV
 except ImportError as e:
-    logger.error(f"Failed to import options Greeks calculators: {e}")
-    _IV_AVAILABLE = False
-    _CALCULATE_ALL_GREEKS_AVAILABLE = False
-    # Create dummy classes to prevent errors
-    class OptionsGreeksCalculator:
-        pass
+    logger.warning(f"Failed to import Numba-based options Greeks calculators: {e}, using pure Python fallback")
+    _IV_AVAILABLE = True  # We have a pure Python fallback
+    _CALCULATE_ALL_GREEKS_AVAILABLE = True  # We have a pure Python fallback
+    
+    # Pure Python implementation of Black-Scholes Greeks (without Numba)
+    import math
+    
+    def _norm_cdf(x):
+        """Standard normal CDF using error function"""
+        return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+    
+    def _norm_pdf(x):
+        """Standard normal PDF"""
+        return math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+    
+    def _d1_d2(S, K, T, r, sigma, q=0.0):
+        """Calculate d1 and d2 for Black-Scholes"""
+        if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+            return 0.0, 0.0
+        sqrt_T = math.sqrt(T)
+        d1 = (math.log(S / K) + (r - q + 0.5 * sigma * sigma) * T) / (sigma * sqrt_T)
+        d2 = d1 - sigma * sqrt_T
+        return d1, d2
+    
+    def _calculate_all_greeks(S, K, T, r, sigma, is_call, q=0.0):
+        """Pure Python Black-Scholes Greeks calculation"""
+        if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+            intrinsic = max(0, S - K) if is_call else max(0, K - S)
+            moneyness = S / K if is_call and K > 0 else K / S if not is_call and S > 0 else 0
+            return (intrinsic, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, intrinsic, 0.0, moneyness, 0.5 if abs(S - K) < 0.01 * K else (1.0 if (is_call and S > K) or (not is_call and S < K) else 0.0))
+        
+        d1, d2 = _d1_d2(S, K, T, r, sigma, q)
+        sqrt_T = math.sqrt(T)
+        exp_qT = math.exp(-q * T)
+        exp_rT = math.exp(-r * T)
+        
+        # Option price
+        if is_call:
+            price = S * exp_qT * _norm_cdf(d1) - K * exp_rT * _norm_cdf(d2)
+            delta = exp_qT * _norm_cdf(d1)
+            theta = (-S * sigma * exp_qT * _norm_pdf(d1) / (2 * sqrt_T) 
+                    - r * K * exp_rT * _norm_cdf(d2) 
+                    + q * S * exp_qT * _norm_cdf(d1)) / 365
+            rho = K * T * exp_rT * _norm_cdf(d2) / 100
+        else:
+            price = K * exp_rT * _norm_cdf(-d2) - S * exp_qT * _norm_cdf(-d1)
+            delta = -exp_qT * _norm_cdf(-d1)
+            theta = (-S * sigma * exp_qT * _norm_pdf(d1) / (2 * sqrt_T) 
+                    + r * K * exp_rT * _norm_cdf(-d2) 
+                    - q * S * exp_qT * _norm_cdf(-d1)) / 365
+            rho = -K * T * exp_rT * _norm_cdf(-d2) / 100
+        
+        # Greeks (same for calls and puts)
+        gamma = exp_qT * _norm_pdf(d1) / (S * sigma * sqrt_T)
+        vega = S * exp_qT * _norm_pdf(d1) * sqrt_T / 100
+        
+        # Derived metrics
+        lambda_val = delta * S / price if price > 0 else 0.0
+        intrinsic = max(0, S - K) if is_call else max(0, K - S)
+        time_val = max(0, price - intrinsic)
+        moneyness = S / K if is_call else K / S
+        prob_itm = _norm_cdf(d2) if is_call else _norm_cdf(-d2)
+        
+        return (price, delta, gamma, theta, vega, rho, lambda_val, intrinsic, time_val, moneyness, prob_itm)
+    
     class ImpliedVolatilityCalculator:
         @staticmethod
-        def implied_volatility_newton_raphson(*args, **kwargs):
-            return 0.2  # Default IV
+        def implied_volatility_newton_raphson(market_price, S, K, T, r, is_call, q=0.0, max_iter=100, tol=1e-6):
+            """Newton-Raphson IV calculation (pure Python)"""
+            if market_price <= 0 or T <= 0 or S <= 0 or K <= 0:
+                return 0.2
+            
+            sigma = 0.2  # Initial guess
+            for _ in range(max_iter):
+                price, _, _, _, vega, _, _, _, _, _, _ = _calculate_all_greeks(S, K, T, r, sigma, is_call, q)
+                vega_actual = vega * 100  # Undo the /100 scaling
+                
+                if abs(vega_actual) < 1e-10:
+                    break
+                    
+                diff = market_price - price
+                if abs(diff) < tol:
+                    break
+                    
+                sigma = sigma + diff / vega_actual
+                sigma = max(0.001, min(5.0, sigma))  # Keep sigma in reasonable bounds
+            
+            return sigma
+    
+    class OptionsGreeksCalculator:
+        @staticmethod
+        def calculate_all_greeks(S, K, T, r, sigma, is_call, q=0.0):
+            return _calculate_all_greeks(S, K, T, r, sigma, is_call, q)
+        
+        @staticmethod
+        def intrinsic_value(S, K, is_call):
+            return max(0, S - K) if is_call else max(0, K - S)
+        
+        @staticmethod
+        def moneyness(S, K, is_call):
+            return S / K if is_call and K > 0 else K / S if not is_call and S > 0 else 0
+    
     class AdvancedGreeks:
-        pass
-    def _calculate_all_greeks(*args, **kwargs):
-        return (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        @staticmethod
+        def charm(S, K, T, r, sigma, is_call, q=0.0):
+            if T <= 0 or sigma <= 0:
+                return 0.0
+            d1, d2 = _d1_d2(S, K, T, r, sigma, q)
+            exp_qT = math.exp(-q * T)
+            sqrt_T = math.sqrt(T)
+            return -exp_qT * _norm_pdf(d1) * (2 * (r - q) * T - d2 * sigma * sqrt_T) / (2 * T * sigma * sqrt_T)
+        
+        @staticmethod
+        def vanna(S, K, T, r, sigma, q=0.0):
+            if T <= 0 or sigma <= 0:
+                return 0.0
+            d1, d2 = _d1_d2(S, K, T, r, sigma, q)
+            exp_qT = math.exp(-q * T)
+            sqrt_T = math.sqrt(T)
+            return -exp_qT * _norm_pdf(d1) * d2 / sigma
+        
+        @staticmethod
+        def volga(S, K, T, r, sigma, q=0.0):
+            if T <= 0 or sigma <= 0:
+                return 0.0
+            d1, d2 = _d1_d2(S, K, T, r, sigma, q)
+            exp_qT = math.exp(-q * T)
+            sqrt_T = math.sqrt(T)
+            vega = S * exp_qT * _norm_pdf(d1) * sqrt_T / 100
+            return vega * d1 * d2 / sigma
 from historicalfetcher.models.data_models import TimeFrameCode, OptionTypeCode, IndicatorResult, CalculationConfig
 
 # Logger is imported from loguru above
@@ -460,8 +582,15 @@ class IndicatorEngine:
         indicators['di_plus'] = di_plus
         indicators['di_minus'] = di_minus
         
+        # Normalize instrument_type for comparison
+        inst_type_str = str(instrument_type).upper() if isinstance(instrument_type, str) else instrument_type
+        is_equity = inst_type_str in [InstrumentType.EQUITY, 'EQ']
+        is_futures = inst_type_str in [InstrumentType.FUTURES, 'FUT']
+        is_options = inst_type_str in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION, 'CE', 'PE']
+        is_index = inst_type_str in [InstrumentType.INDEX, 'INDEX']
+        
         # Ichimoku Cloud (Equity, Futures, Index)
-        if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.INDEX]:
+        if is_equity or is_futures or is_index:
             ichimoku_tenkan, ichimoku_kijun, ichimoku_senkou_a, ichimoku_senkou_b, ichimoku_chikou, ichimoku_cloud_top, ichimoku_cloud_bottom, ichimoku_cloud_color = NumbaIndicators.ichimoku(high, low, close)
             indicators['ichimoku_tenkan_sen'] = ichimoku_tenkan
             indicators['ichimoku_kijun_sen'] = ichimoku_kijun
@@ -484,7 +613,7 @@ class IndicatorEngine:
             indicators['ichimoku_signal'] = ichimoku_signal.astype(np.float64)
         
         # Aroon Indicator (Equity, Futures, Index)
-        if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.INDEX]:
+        if is_equity or is_futures or is_index:
             aroon_up, aroon_down, aroon_oscillator = NumbaIndicators.aroon(high, low, 25)
             indicators['aroon_up'] = aroon_up
             indicators['aroon_down'] = aroon_down
@@ -502,22 +631,22 @@ class IndicatorEngine:
             indicators['aroon_signal'] = aroon_signal.astype(np.float64)
         
         # Volume-based indicators (not for Index)
-        if instrument_type != InstrumentType.INDEX:
+        if not is_index:
             # Accumulation/Distribution Line (Equity, Futures)
-            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES]:
+            if is_equity or is_futures:
                 ad_line, ad_line_slope, ad_line_signal = NumbaIndicators.ad_line(high, low, close, volume)
                 indicators['ad_line'] = ad_line
                 indicators['ad_line_slope'] = ad_line_slope
                 indicators['ad_line_signal'] = ad_line_signal.astype(np.float64)
             
             # Chaikin Money Flow (Equity, Futures)
-            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES]:
+            if is_equity or is_futures:
                 cmf_20, cmf_signal = NumbaIndicators.cmf(high, low, close, volume, 20)
                 indicators['cmf_20'] = cmf_20
                 indicators['cmf_signal'] = cmf_signal.astype(np.float64)
             
             # Volume Profile (Equity, Futures, Options)
-            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            if is_equity or is_futures or is_options:
                 volume_profile_poc, volume_profile_vah, volume_profile_val, volume_profile_balance = NumbaIndicators.volume_profile(high, low, close, volume, 20)
                 indicators['volume_profile_poc'] = volume_profile_poc
                 indicators['volume_profile_vah'] = volume_profile_vah
@@ -525,12 +654,12 @@ class IndicatorEngine:
                 indicators['volume_profile_balance'] = volume_profile_balance
             
             # TWAP (Equity, Futures, Options)
-            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            if is_equity or is_futures or is_options:
                 twap = NumbaIndicators.twap(high, low, close)
                 indicators['twap'] = twap
             
             # Volume Divergence (Equity, Futures, Options)
-            if instrument_type in [InstrumentType.EQUITY, InstrumentType.FUTURES, InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            if is_equity or is_futures or is_options:
                 # Get RSI and MACD for divergence calculation
                 rsi = indicators.get('rsi_14', NumbaIndicators.rsi(close, 14))
                 macd_line = indicators.get('macd_line', NumbaIndicators.macd(close, 12, 26, 9)[0])
@@ -582,10 +711,37 @@ class IndicatorEngine:
         
         # Options parameters
         strike = symbol_info.strike or 0.0
-        is_call = symbol_info.instrument_type == InstrumentType.CALL_OPTION
+        
+        # Validate strike and spot price - critical for Greeks calculation
+        if strike <= 0:
+            logger.warning(f"Invalid strike price ({strike}) for {symbol_info.symbol}, cannot calculate Greeks")
+            # Return arrays filled with 0 for all Greeks
+            for key in greeks:
+                greeks[key].fill(0.0)
+            return greeks
+        
+        if spot_price <= 0:
+            logger.warning(f"Invalid spot price ({spot_price}) for {symbol_info.symbol}, cannot calculate Greeks")
+            for key in greeks:
+                greeks[key].fill(0.0)
+            return greeks
+        
+        # Determine if call or put - handle both string and enum types
+        inst_type = symbol_info.instrument_type
+        if isinstance(inst_type, str):
+            is_call = inst_type.upper() in ['CE', 'CALL', 'CALL_OPTION']
+        else:
+            is_call = inst_type == InstrumentType.CALL_OPTION
         
         # Calculate expiry time for each candle
         expiry_date = self._parse_expiry_date(symbol_info.expiry)
+        
+        # Validate expiry date
+        if expiry_date is None:
+            logger.warning(f"Could not parse expiry for {symbol_info.symbol} (expiry='{symbol_info.expiry}'), cannot calculate Greeks")
+            for key in greeks:
+                greeks[key].fill(0.0)
+            return greeks
         
         for i, candle in enumerate(candles):
             # Calculate time to expiry in years
@@ -774,15 +930,59 @@ class IndicatorEngine:
         return changes, pct_changes
     
     def _parse_expiry_date(self, expiry_str: Optional[str]) -> Optional[datetime]:
-        """Parse expiry date string"""
+        """Parse expiry date string supporting multiple formats"""
         if not expiry_str:
             return None
         
+        # Try multiple date formats
+        formats_to_try = [
+            "%d-%b-%y",     # 28-Nov-24
+            "%d-%b-%Y",     # 28-Nov-2024
+            "%Y-%m-%d",     # 2024-11-28
+            "%d/%m/%Y",     # 28/11/2024
+            "%d/%m/%y",     # 28/11/24
+        ]
+        
+        for fmt in formats_to_try:
+            try:
+                return datetime.strptime(expiry_str, fmt)
+            except ValueError:
+                continue
+        
+        # Try DDMMMYY format (e.g., "28NOV24") - common in Indian markets
         try:
-            return datetime.strptime(expiry_str, "%d-%b-%y")
-        except Exception as e:
-            logger.warning(f"Could not parse expiry date '{expiry_str}': {e}")
-            return None
+            if len(expiry_str) == 7 and expiry_str[2:5].isalpha():
+                day = int(expiry_str[:2])
+                month_str = expiry_str[2:5].upper()
+                year = int('20' + expiry_str[5:7])
+                month_map = {
+                    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+                }
+                month = month_map.get(month_str)
+                if month:
+                    return datetime(year, month, day)
+        except (ValueError, IndexError):
+            pass
+        
+        # Try DDMMMYYYY format (e.g., "28NOV2024")
+        try:
+            if len(expiry_str) == 9 and expiry_str[2:5].isalpha():
+                day = int(expiry_str[:2])
+                month_str = expiry_str[2:5].upper()
+                year = int(expiry_str[5:9])
+                month_map = {
+                    'JAN': 1, 'FEB': 2, 'MAR': 3, 'APR': 4, 'MAY': 5, 'JUN': 6,
+                    'JUL': 7, 'AUG': 8, 'SEP': 9, 'OCT': 10, 'NOV': 11, 'DEC': 12
+                }
+                month = month_map.get(month_str)
+                if month:
+                    return datetime(year, month, day)
+        except (ValueError, IndexError):
+            pass
+        
+        logger.warning(f"Could not parse expiry date '{expiry_str}' with any known format")
+        return None
     
     def _calculate_time_to_expiry(self, current_time: datetime, expiry_date: Optional[datetime]) -> float:
         """Calculate time to expiry in years"""
@@ -1184,18 +1384,19 @@ class BatchIndicatorProcessor:
         tasks = []
         
         for symbol_info, candles, timeframe in symbols_data:
-            if symbol_info.instrument_type == InstrumentType.EQUITY:
+            inst_type = symbol_info.instrument_type
+            if inst_type in [InstrumentType.EQUITY, 'EQ']:
                 task = self.engine.calculate_equity_indicators(
                     symbol_info, candles, timeframe,
                     market_depth_data.get(symbol_info.symbol) if market_depth_data else None
                 )
-            elif symbol_info.instrument_type == InstrumentType.FUTURES:
+            elif inst_type in [InstrumentType.FUTURES, 'FUT']:
                 spot_price = spot_prices.get(symbol_info.symbol) if spot_prices else None
                 task = self.engine.calculate_futures_indicators(
                     symbol_info, candles, timeframe, spot_price,
                     market_depth_data.get(symbol_info.symbol) if market_depth_data else None
                 )
-            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            elif inst_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION, 'CE', 'PE']:
                 # Extract underlying from option symbol
                 import re
                 underlying = symbol_info.symbol

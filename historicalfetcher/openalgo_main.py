@@ -859,15 +859,34 @@ class OpenAlgoHistoricalDataFetcher:
                             logger.debug(f"Fetching underlying spot price for {symbol_info.symbol} via quotes API...")
                             spot_price = await self._fetch_underlying_spot_price(symbol_info)
                             
-                            # If spot price is not available, use CLOSE price from latest candle as fallback
+                            # If spot price is not available, estimate from strike + option price
                             if spot_price is None or spot_price == 0:
-                                if candles and len(candles) > 0:
-                                    # Use the latest candle's CLOSE price as spot price fallback
-                                    latest_candle = candles[-1]  # Last candle (most recent)
-                                    spot_price = latest_candle.close
-                                    logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol}, using CLOSE price ({spot_price}) from latest candle as fallback for Greeks calculation")
+                                if symbol_info.strike and symbol_info.strike > 0:
+                                    # Use strike price + option premium as estimated spot for CE
+                                    # Use strike price - option premium as estimated spot for PE
+                                    # This is a rough approximation assuming slight ITM
+                                    if candles and len(candles) > 0:
+                                        latest_candle = candles[-1]
+                                        option_premium = latest_candle.close
+                                        is_call = symbol_info.instrument_type in [InstrumentType.CE, 'CE']
+                                        
+                                        if is_call:
+                                            # For CE: Spot ≈ Strike + Intrinsic Value
+                                            # Assume option is slightly ITM, so spot ≈ strike + premium * 0.5
+                                            spot_price = symbol_info.strike + (option_premium * 0.3)
+                                        else:
+                                            # For PE: Spot ≈ Strike - Intrinsic Value
+                                            spot_price = symbol_info.strike - (option_premium * 0.3)
+                                        
+                                        logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol}, "
+                                                     f"estimated spot={spot_price:.2f} from strike={symbol_info.strike} "
+                                                     f"and option premium={option_premium:.2f}")
+                                    else:
+                                        # No candles, use strike as approximation (ATM assumption)
+                                        spot_price = symbol_info.strike
+                                        logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol}, using strike price ({spot_price}) as fallback")
                                 else:
-                                    logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol} and no candles available, Greeks calculation may be inaccurate")
+                                    logger.warning(f"⚠️ Could not fetch spot price for {symbol_info.symbol} and no strike available, Greeks calculation will be skipped")
                                     spot_price = 0.0
                             else:
                                 logger.debug(f"✅ Fetched spot price for {symbol_info.symbol}: {spot_price}")

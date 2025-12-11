@@ -189,22 +189,22 @@ class OptimizedQuestDBClient:
             indicator_results = []
             if indicator_engine:
                 try:
-                    if symbol_info.instrument_type == InstrumentType.EQUITY:
+                    if symbol_info.instrument_type in [InstrumentType.EQUITY, 'EQ']:
                         indicator_results = await indicator_engine.calculate_equity_indicators(
                             symbol_info, candles, timeframe, market_depth_data
                         )
-                    elif symbol_info.instrument_type == InstrumentType.FUTURES:
+                    elif symbol_info.instrument_type in [InstrumentType.FUTURES, 'FUT']:
                         indicator_results = await indicator_engine.calculate_futures_indicators(
                             symbol_info, candles, timeframe, spot_price, market_depth_data
                         )
-                    elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                    elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION, 'CE', 'PE']:
                         if spot_price is None:
                             logger.warning(f"Spot price required for options {symbol_info.symbol}")
                             spot_price = 0.0
                         indicator_results = await indicator_engine.calculate_options_indicators(
                             symbol_info, candles, timeframe, spot_price, market_depth_data=market_depth_data
                         )
-                    elif symbol_info.instrument_type == InstrumentType.INDEX:
+                    elif symbol_info.instrument_type in [InstrumentType.INDEX, 'INDEX']:
                         indicator_results = await indicator_engine.calculate_equity_indicators(
                             symbol_info, candles, timeframe, market_depth_data
                         )
@@ -324,13 +324,14 @@ class OptimizedQuestDBClient:
             from historicalfetcher.models.data_models import TimeFrameCode
             
             # Prepare enhanced insert data based on instrument type
-            if symbol_info.instrument_type == InstrumentType.EQUITY:
+            inst_type = symbol_info.instrument_type
+            if inst_type in [InstrumentType.EQUITY, 'EQ']:
                 return await self._insert_enhanced_equity_data(table_name, indicator_results)
-            elif symbol_info.instrument_type == InstrumentType.FUTURES:
+            elif inst_type in [InstrumentType.FUTURES, 'FUT']:
                 return await self._insert_enhanced_futures_data(table_name, indicator_results)
-            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            elif inst_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION, 'CE', 'PE']:
                 return await self._insert_enhanced_options_data(table_name, symbol_info, indicator_results)
-            elif symbol_info.instrument_type == InstrumentType.INDEX:
+            elif inst_type in [InstrumentType.INDEX, 'INDEX']:
                 return await self._insert_enhanced_index_data(table_name, symbol_info, indicator_results)
             else:
                 # Default to equity
@@ -1740,13 +1741,14 @@ class OptimizedQuestDBClient:
             tf_string = TimeFrameCode.to_string(timeframe)
             
             # Build query based on instrument type
-            if symbol_info.instrument_type == InstrumentType.EQUITY:
+            inst_type = symbol_info.instrument_type
+            if inst_type in [InstrumentType.EQUITY, 'EQ']:
                 base_query = f"SELECT tf, open, high, low, close, volume, timestamp FROM {table_name}"
-            elif symbol_info.instrument_type == InstrumentType.FUTURES:
+            elif inst_type in [InstrumentType.FUTURES, 'FUT']:
                 base_query = f"SELECT contract_token, expiry_date, tf, open, high, low, close, volume, oi, timestamp FROM {table_name}"
-            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            elif inst_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION, 'CE', 'PE']:
                 base_query = f"SELECT contract_token, option_type, strike, tf, open, high, low, close, volume, oi, timestamp FROM {table_name}"
-            elif symbol_info.instrument_type == InstrumentType.INDEX:
+            elif inst_type in [InstrumentType.INDEX, 'INDEX']:
                 base_query = f"SELECT tf, open, high, low, close, timestamp FROM {table_name}"
             else:
                 base_query = f"SELECT * FROM {table_name}"

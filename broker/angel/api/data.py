@@ -414,11 +414,12 @@ class BrokerData:
                 logger.debug(f"Debug - API Payload: {payload}")
                 
                 try:
+                    logger.info(f"Debug - Making API request to endpoint: /rest/secure/angelbroking/historical/v1/getCandleData with payload: {payload} and auth token: {self.auth_token}")
                     response = get_api_response("/rest/secure/angelbroking/historical/v1/getCandleData",
                                               self.auth_token,
                                               "POST",
                                               payload)
-                    logger.info(f"Debug - API Response Status: {response.get('status')}")
+                    logger.info(f"Debug - API Response Status: {response.get('status')} and response: {response}")
                     
                     # Check if response is empty or invalid
                     if not response:
