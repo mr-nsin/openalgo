@@ -10,7 +10,11 @@ import sys
 import os
 import traceback
 from datetime import datetime, timedelta
+<<<<<<< HEAD
 from typing import Dict, Any, List, Optional
+=======
+from typing import Dict, Any, List
+>>>>>>> 98cb17d (Fix historicalfetcher)
 import time
 
 # Ensure historical_fetcher local packages (database/, models/, etc.) are importable
@@ -25,7 +29,10 @@ if _project_root not in sys.path:
     sys.path.append(_project_root)
 
 from historicalfetcher.utils.async_logger import setup_async_logger, get_async_logger
+<<<<<<< HEAD
 from historicalfetcher.utils.fetch_metrics import FetchMetricsTracker, FailureReason
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
 
 # Initialize async logger early for module-level logging
 # Default logger will be reconfigured in __init__ with settings
@@ -53,7 +60,10 @@ except ImportError:
     logger.warning("python-dotenv not installed. Using system environment variables only.")
 # Import from historicalfetcher local packages
 from historicalfetcher.config.openalgo_settings import OpenAlgoSettings, InstrumentType, TimeFrame
+<<<<<<< HEAD
 from historicalfetcher.models.data_models import SymbolInfo
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
 from historicalfetcher.fetchers.openalgo_zerodha_fetcher import OpenAlgoZerodhaHistoricalFetcher, OpenAlgoSymbolManager
 from historicalfetcher.database.optimized_questdb_client import OptimizedQuestDBClient
 from historicalfetcher.database.models import FetchSummaryModel
@@ -108,12 +118,15 @@ class OpenAlgoHistoricalDataFetcher:
             enable_auto_collection=self.settings.enable_performance_monitoring
         )
         
+<<<<<<< HEAD
         # Initialize metrics tracker for detailed reporting
         self.metrics_tracker = FetchMetricsTracker(
             email_notifier=self.notification_manager.email_notifier if hasattr(self.notification_manager, 'email_notifier') else None,
             telegram_notifier=self.notification_manager.telegram_notifier if hasattr(self.notification_manager, 'telegram_notifier') else None
         )
         
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
         # Processing statistics
         self.stats = {
             'start_time': None,
@@ -155,9 +168,12 @@ class OpenAlgoHistoricalDataFetcher:
             self.stats['total_symbols'] = total_symbols
             self.stats['start_time'] = datetime.now()
             
+<<<<<<< HEAD
             # Initialize metrics tracker
             self.metrics_tracker.start_tracking(total_symbols)
             
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
             self.performance_monitor.start_processing(total_symbols)
             
             logger.info(f"📊 Found {total_symbols:,} symbols across {len(symbols_by_type)} instrument types")
@@ -171,6 +187,7 @@ class OpenAlgoHistoricalDataFetcher:
                     channels=['telegram']
                 )
             
+<<<<<<< HEAD
             # Process each instrument type in priority order
             # Priority: INDEX CE/PE FIRST, then INDEX symbols, then equity CE/PE, then FUT, EQ
             
@@ -459,6 +476,15 @@ class OpenAlgoHistoricalDataFetcher:
                     if symbols:
                         logger.info(f"🔄 Processing {len(symbols):,} {instrument_type} symbols")
                         await self._process_instrument_type(instrument_type, symbols)
+=======
+            # Process each instrument type
+            for instrument_type, symbols in symbols_by_type.items():
+                if not symbols:
+                    continue
+                
+                logger.info(f"🔄 Processing {instrument_type} symbols ({len(symbols):,} symbols)")
+                await self._process_instrument_type(instrument_type, symbols)
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             # Finalize processing
             await self._finalize_processing()
@@ -636,6 +662,7 @@ class OpenAlgoHistoricalDataFetcher:
                     failed=self.stats['failed_symbols']
                 )
     
+<<<<<<< HEAD
     async def _fetch_underlying_spot_price(self, symbol_info: SymbolInfo) -> Optional[float]:
         """
         Fetch spot price (LTP) for the underlying symbol of an option
@@ -709,6 +736,8 @@ class OpenAlgoHistoricalDataFetcher:
             logger.warning(f"Error fetching spot price for {symbol_info.symbol} (underlying: {underlying}): {e}")
             return None
     
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
     async def _process_single_symbol(self, symbol_info) -> int:
         """Process historical data for a single symbol across all timeframes"""
         
@@ -719,16 +748,20 @@ class OpenAlgoHistoricalDataFetcher:
         ordered_timeframes = self._get_processing_order(timeframes)
         
         for timeframe in ordered_timeframes:
+<<<<<<< HEAD
             from_date = None
             to_date = None
             date_range_str = "N/A"
             
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
             try:
                 async with AsyncTimer(self.performance_monitor, f'fetch_{timeframe.value}'):
                     # Determine date range
                     from_date, to_date = await self._get_date_range(symbol_info, timeframe)
                     
                     if not from_date or not to_date:
+<<<<<<< HEAD
                         # Track as failure - no date range
                         date_range_str = "Invalid date range"
                         self.metrics_tracker.record_symbol_failure(
@@ -901,10 +934,30 @@ class OpenAlgoHistoricalDataFetcher:
                                 timeframe,
                                 candles,
                                 spot_price=spot_price
+=======
+                        continue
+                    
+                    # Fetch historical data
+                    candles = await self.zerodha_fetcher.fetch_historical_data(
+                        symbol_info,
+                        timeframe,
+                        from_date,
+                        to_date
+                    )
+                    
+                    if candles:
+                        # Store in QuestDB
+                        async with AsyncTimer(self.performance_monitor, f'store_{timeframe.value}'):
+                            records_inserted = await self.questdb_client.upsert_historical_data(
+                                symbol_info,
+                                timeframe.value,
+                                candles
+>>>>>>> 98cb17d (Fix historicalfetcher)
                             )
                         
                         total_records += records_inserted
                         
+<<<<<<< HEAD
                         # Track success in metrics
                         self.metrics_tracker.record_symbol_success(
                             symbol_info=symbol_info,
@@ -913,6 +966,8 @@ class OpenAlgoHistoricalDataFetcher:
                             records_inserted=records_inserted
                         )
                         
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
                         # Update timeframe stats
                         if timeframe.value not in self.stats['timeframe_stats']:
                             self.stats['timeframe_stats'][timeframe.value] = 0
@@ -926,6 +981,7 @@ class OpenAlgoHistoricalDataFetcher:
                             records_inserted
                         )
                         
+<<<<<<< HEAD
                         # Log after saving: Success with records inserted, symbol, timeframe, date range, table name
                         logger.info(f"✅ Saved {symbol_info.symbol} | Timeframe: {timeframe.value} | Date Range: {date_range_str} | Records: {records_inserted:,} | Table: {table_name}")
                     else:
@@ -939,6 +995,13 @@ class OpenAlgoHistoricalDataFetcher:
                             failure_reason=FailureReason.NO_DATA,
                             error_message="No data returned from API"
                         )
+=======
+                        logger.debug(
+                            f"✅ {symbol_info.symbol} ({timeframe.value}): {records_inserted:,} records"
+                        )
+                    else:
+                        logger.debug(f"⚠️ No data found for {symbol_info.symbol} ({timeframe.value})")
+>>>>>>> 98cb17d (Fix historicalfetcher)
                         
                         await self.questdb_client.update_fetch_status(
                             symbol_info,
@@ -948,6 +1011,7 @@ class OpenAlgoHistoricalDataFetcher:
                         )
             
             except Exception as e:
+<<<<<<< HEAD
                 error_msg = str(e)
                 error_type = type(e).__name__
                 
@@ -992,12 +1056,20 @@ class OpenAlgoHistoricalDataFetcher:
                     failure_reason=failure_reason,
                     error_message=error_msg[:500]  # Limit error message length
                 )
+=======
+                logger.exception(f"❌ Error fetching {symbol_info.symbol} ({timeframe.value}): {e}")
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 await self.questdb_client.update_fetch_status(
                     symbol_info,
                     timeframe.value,
                     'error',
+<<<<<<< HEAD
                     0
+=======
+                    0,
+                    str(e)
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 )
         
         return total_records
@@ -1028,6 +1100,7 @@ class OpenAlgoHistoricalDataFetcher:
     async def _get_date_range(self, symbol_info, timeframe: TimeFrame) -> tuple:
         """Get appropriate date range for fetching historical data"""
         
+<<<<<<< HEAD
         # Fix: Use today's date, not current datetime to avoid future dates
         today = datetime.now().date()
         
@@ -1174,6 +1247,28 @@ class OpenAlgoHistoricalDataFetcher:
             # Return None to indicate invalid range
             return None, None
         
+=======
+        end_date = datetime.now()
+        
+        # Check if we have existing data and should do incremental fetch
+        last_fetch_date = await self.questdb_client.get_last_fetch_date(symbol_info, timeframe.value)
+        
+        if last_fetch_date and self.settings.start_date_override is None:
+            # Incremental fetch from last successful date
+            start_date = last_fetch_date
+            logger.debug(f"Incremental fetch for {symbol_info.symbol} from {start_date.date()}")
+        else:
+            # Full fetch based on settings
+            if self.settings.start_date_override:
+                try:
+                    start_date = datetime.strptime(self.settings.start_date_override, "%Y-%m-%d")
+                except ValueError:
+                    logger.warning(f"Invalid start_date_override: {self.settings.start_date_override}")
+                    start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+            else:
+                start_date = end_date - timedelta(days=self.settings.historical_days_limit)
+        
+>>>>>>> 98cb17d (Fix historicalfetcher)
         return start_date, end_date
     
     async def _maybe_send_progress_notification(self, current_symbol: str):
@@ -1250,17 +1345,23 @@ class OpenAlgoHistoricalDataFetcher:
         )
         self.stats['daily_data_records'] = self.stats['timeframe_stats'].get('D', 0)
         
+<<<<<<< HEAD
         # Finish metrics tracking
         self.metrics_tracker.finish_tracking()
         
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
         # Insert fetch summary into database
         await self._insert_fetch_summary()
         
         # Log final statistics
         await self._log_final_statistics()
+<<<<<<< HEAD
         
         # Generate and log detailed report with failed symbols
         await self._log_detailed_completion_report()
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     async def _insert_fetch_summary(self):
         """Insert daily fetch summary into database"""
@@ -1310,6 +1411,7 @@ class OpenAlgoHistoricalDataFetcher:
             logger.info(f"  • Avg CPU: {perf_summary.get('avg_cpu_percent', 0):.1f}%")
             logger.info(f"  • Processing Rate: {perf_summary.get('processing_stats', {}).get('items_per_second', 0):.1f} symbols/sec")
     
+<<<<<<< HEAD
     async def _log_detailed_completion_report(self):
         """Generate and log detailed completion report with all failed symbols"""
         
@@ -1358,6 +1460,8 @@ class OpenAlgoHistoricalDataFetcher:
             
             logger.info("\n" + "=" * 80)
     
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
     async def _handle_interruption(self):
         """Handle graceful shutdown on interruption"""
         

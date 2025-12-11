@@ -4,7 +4,11 @@ Data models for OpenAlgo Historical Data Fetcher
 This module contains shared data models to avoid circular imports.
 """
 
+<<<<<<< HEAD
 from dataclasses import dataclass, field
+=======
+from dataclasses import dataclass
+>>>>>>> 98cb17d (Fix historicalfetcher)
 from datetime import datetime
 from typing import Optional, Dict, List
 from enum import IntEnum
@@ -45,6 +49,7 @@ class TimeFrameCode(IntEnum):
     MINUTE_30 = 30
     HOUR_1 = 60
     DAILY = 1440
+<<<<<<< HEAD
     
     @classmethod
     def from_timeframe(cls, timeframe):
@@ -102,6 +107,8 @@ class TimeFrameCode(IntEnum):
             cls.DAILY: 'D',
         }
         return numeric_mapping.get(timeframe, '1m')
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
 
 
 class OptionTypeCode(IntEnum):
@@ -114,19 +121,32 @@ class OptionTypeCode(IntEnum):
 class IndicatorResult:
     """Container for calculated indicators"""
     symbol: str
+<<<<<<< HEAD
     timeframe: str  # Changed to string for SYMBOL storage ('1m', '5m', 'D', etc.)
     timestamp: datetime
     
     # Basic OHLCV + OI
+=======
+    timeframe: int
+    timestamp: datetime
+    
+    # Basic OHLCV
+>>>>>>> 98cb17d (Fix historicalfetcher)
     open: float
     high: float
     low: float
     close: float
     volume: int
+<<<<<<< HEAD
     oi: int = 0  # Open Interest (0 for equity/index, populated for futures/options)
     
     # Technical Indicators
     indicators: Dict[str, float] = field(default_factory=dict)
+=======
+    
+    # Technical Indicators
+    indicators: Dict[str, float]
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     # Options Greeks (if applicable)
     greeks: Optional[Dict[str, float]] = None
@@ -142,6 +162,7 @@ class IndicatorResult:
 class CalculationConfig:
     """Configuration for indicator calculations"""
     
+<<<<<<< HEAD
     # Grouped Technical Indicators (matching indicator engine expectations)
     calculate_trend_indicators: bool = True      # EMA, SMA
     calculate_momentum_indicators: bool = True   # RSI, MACD, Stochastic
@@ -152,6 +173,9 @@ class CalculationConfig:
     calculate_advanced_greeks: bool = False     # Advanced Greeks
     
     # Individual Technical Indicators (for backward compatibility)
+=======
+    # Technical Indicators
+>>>>>>> 98cb17d (Fix historicalfetcher)
     enable_sma: bool = True
     enable_ema: bool = True
     enable_rsi: bool = True
@@ -205,9 +229,12 @@ class CalculationConfig:
     enable_parallel_processing: bool = True
     max_workers: int = 4
     
+<<<<<<< HEAD
     # Caching configuration
     enable_caching: bool = True
     
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
     def __post_init__(self):
         """Set default values for list fields"""
         if self.sma_periods is None:

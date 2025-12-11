@@ -37,6 +37,7 @@ HIST_FETCHER_QUESTDB_DATABASE=qdb
 
 # Timeframes to fetch (comma-separated)
 # Supported: 1m, 3m, 5m, 15m, 30m, 1h, D
+<<<<<<< HEAD
 HIST_FETCHER_ENABLED_TIMEFRAMES=1m,3m,5m,15m,30m,1h,D
 
 # Instrument types to fetch (comma-separated)
@@ -87,6 +88,20 @@ HIST_FETCHER_OPTIONS_ALLOWED_UNDERLYINGS=NIFTY,BANKNIFTY,SENSEX,FINNIFTY
 # Default: true (only fetch specified underlyings)
 HIST_FETCHER_OPTIONS_FILTER_BY_UNDERLYING=true
 
+=======
+HIST_FETCHER_ENABLED_TIMEFRAMES=1m,5m,15m,1h,D
+
+# Instrument types to fetch (comma-separated)
+# Supported: EQ, FUT, CE, PE, INDEX
+HIST_FETCHER_ENABLED_INSTRUMENT_TYPES=EQ,FUT,CE,PE,INDEX
+
+# Exchanges to include (comma-separated)
+HIST_FETCHER_ENABLED_EXCHANGES=NSE,BSE,NFO,BFO,NSE_INDEX,BSE_INDEX
+
+# Historical data range (days from today)
+HIST_FETCHER_HISTORICAL_DAYS_LIMIT=365
+
+>>>>>>> 98cb17d (Fix historicalfetcher)
 # Optional: Override start date (YYYY-MM-DD format)
 # If set, this overrides HISTORICAL_DAYS_LIMIT
 HIST_FETCHER_START_DATE_OVERRIDE=
@@ -95,6 +110,7 @@ HIST_FETCHER_START_DATE_OVERRIDE=
 # PERFORMANCE CONFIGURATION
 # ============================================================================
 # Configure processing performance and rate limiting
+<<<<<<< HEAD
 #
 # IMPORTANT: Rate limiting is critical to avoid API throttling and "too many requests" errors
 # Zerodha API official limit: 3 requests/second
@@ -125,6 +141,16 @@ HIST_FETCHER_MAX_CONCURRENT_REQUESTS=2
 # Recommended: 50 (good balance between throughput and memory)
 # Lower values (10-20): More control, less memory usage
 # Higher values (100+): Faster but more memory intensive
+=======
+
+# API requests per second (respect broker limits)
+HIST_FETCHER_API_REQUESTS_PER_SECOND=3
+
+# Maximum concurrent requests
+HIST_FETCHER_MAX_CONCURRENT_REQUESTS=5
+
+# Batch size for processing symbols
+>>>>>>> 98cb17d (Fix historicalfetcher)
 HIST_FETCHER_BATCH_SIZE=50
 
 # Memory limit in MB

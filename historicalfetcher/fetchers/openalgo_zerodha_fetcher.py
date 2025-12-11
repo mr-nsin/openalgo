@@ -40,6 +40,10 @@ SymToken = openalgo_database_symbol.SymToken
 db_session = openalgo_database_symbol.db_session
 
 from database.auth_db import get_auth_token_broker
+<<<<<<< HEAD
+=======
+from services.history_service import get_history_with_auth
+>>>>>>> 98cb17d (Fix historicalfetcher)
 from historicalfetcher.config.openalgo_settings import OpenAlgoSettings, TimeFrame
 from typing import Optional, Dict
 # Import utilities from historicalfetcher package
@@ -60,8 +64,12 @@ class OpenAlgoZerodhaHistoricalFetcher:
         self._async_logger = None
         
         # Rate limiting - optimized with better semaphore management
+<<<<<<< HEAD
         # Semaphore uses max_concurrent, rate limiting uses api_requests_per_second
         self._request_semaphore = asyncio.Semaphore(settings.max_concurrent_requests)
+=======
+        self._request_semaphore = asyncio.Semaphore(settings.api_requests_per_second)
+>>>>>>> 98cb17d (Fix historicalfetcher)
         self._last_request_time = 0.0
         self._min_request_interval = 1.0 / settings.api_requests_per_second
         
@@ -150,6 +158,7 @@ class OpenAlgoZerodhaHistoricalFetcher:
                     self._interval_cache[timeframe_key] = self._get_zerodha_interval(timeframe)
                 zerodha_interval = self._interval_cache[timeframe_key]
                 
+<<<<<<< HEAD
                 # ============================================================
                 # DETAILED LOGGING FOR API REQUEST
                 # ============================================================
@@ -304,6 +313,43 @@ class OpenAlgoZerodhaHistoricalFetcher:
                     candles = []
                 else:
                     candles = await self._dataframe_to_candles_async(df)
+=======
+                logger.debug(f"Fetching {timeframe.value} data for {symbol} ({exchange}) from {from_str} to {to_str}")
+                
+                # Use OpenAlgo's history service to fetch historical data
+                # Get auth token for the broker
+                auth_token, broker_name = get_auth_token_broker(self.settings.openalgo_api_key)
+                if not auth_token:
+                    raise Exception(f"Failed to get auth token for API key: {self.settings.openalgo_api_key}")
+                
+                # Run in thread pool to avoid blocking
+                import concurrent.futures
+                loop = asyncio.get_event_loop()
+                
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    success, response_data, status_code = await loop.run_in_executor(
+                        executor,
+                        lambda: get_history_with_auth(
+                            auth_token=auth_token,
+                            feed_token=None,
+                            broker=broker_name,
+                            symbol=symbol,
+                            exchange=exchange,
+                            interval=zerodha_interval,
+                            start_date=from_str,
+                            end_date=to_str
+                        )
+                    )
+                    
+                    if not success:
+                        raise Exception(f"Failed to fetch historical data: {response_data}")
+                    
+                    # Convert response to DataFrame
+                    df = response_data.get('data', pd.DataFrame())
+                
+                # Convert DataFrame to HistoricalCandle objects (optimized)
+                candles = await self._dataframe_to_candles_async(df)
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 self.stats['total_requests'] += 1
                 self.stats['successful_requests'] += 1
@@ -349,6 +395,7 @@ class OpenAlgoZerodhaHistoricalFetcher:
     async def _dataframe_to_candles_async(self, df) -> List[HistoricalCandle]:
         """Convert pandas DataFrame to HistoricalCandle objects (optimized async version)"""
         
+<<<<<<< HEAD
         # Handle case where df might be a list instead of DataFrame
         if isinstance(df, list):
             if not df:  # Empty list
@@ -381,6 +428,15 @@ class OpenAlgoZerodhaHistoricalFetcher:
         candles = []
         
         # Optimize: use vectorized operations where possible
+=======
+        if df.empty:
+            return []
+        
+        candles = []
+        
+        # Optimize: use vectorized operations where possible
+        import pandas as pd
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         try:
             # Batch process in chunks for better memory efficiency
@@ -398,9 +454,13 @@ class OpenAlgoZerodhaHistoricalFetcher:
                         if isinstance(row['timestamp'], (int, float)):
                             timestamp = datetime.fromtimestamp(row['timestamp'])
                         else:
+<<<<<<< HEAD
                             # Fallback: try to parse as datetime string
                             from datetime import datetime as dt
                             timestamp = dt.fromisoformat(str(row['timestamp']).replace('Z', '+00:00'))
+=======
+                            timestamp = pd.to_datetime(row['timestamp']).to_pydatetime()
+>>>>>>> 98cb17d (Fix historicalfetcher)
                         
                         candle = HistoricalCandle(
                             timestamp=timestamp,
@@ -429,6 +489,7 @@ class OpenAlgoZerodhaHistoricalFetcher:
         return candles
     
     async def _enforce_rate_limit(self):
+<<<<<<< HEAD
         """Enforce rate limiting between requests with improved backoff"""
         current_time = asyncio.get_event_loop().time()
         time_since_last_request = current_time - self._last_request_time
@@ -445,6 +506,17 @@ class OpenAlgoZerodhaHistoricalFetcher:
         # Add minimal buffer for broker API stability (reduced from 2.0s to 0.5s)
         # The rate limiter already enforces proper spacing, this is just a safety margin
         await asyncio.sleep(0.5)  # 0.5 second buffer to prevent rate limiting
+=======
+        """Enforce rate limiting between requests (optimized)"""
+        current_time = asyncio.get_event_loop().time()
+        time_since_last_request = current_time - self._last_request_time
+        
+        if time_since_last_request < self._min_request_interval:
+            sleep_time = self._min_request_interval - time_since_last_request
+            if sleep_time > 0:
+                await asyncio.sleep(sleep_time)
+        
+>>>>>>> 98cb17d (Fix historicalfetcher)
         self._last_request_time = asyncio.get_event_loop().time()
     
     async def fetch_multiple_symbols(
@@ -555,6 +627,7 @@ class OpenAlgoSymbolManager:
             
             def fetch_symbols():
                 with db_session() as session:
+<<<<<<< HEAD
                     # ============================================================
                     # MAP FETCHER TYPES TO DATABASE TYPES
                     # ============================================================
@@ -636,17 +709,30 @@ class OpenAlgoSymbolManager:
                     
                     logger.info(f"📊 Symbol fetching: {liquid_count} liquid + {other_count} others = {len(all_symbols)} total (NO LIMITS)")
                     return all_symbols
+=======
+                    # Query symbols based on enabled instrument types and exchanges
+                    query = session.query(SymToken).filter(
+                        SymToken.instrumenttype.in_(self.settings.enabled_instrument_types),
+                        SymToken.exchange.in_(self.settings.enabled_exchanges)
+                    )
+                    return query.all()
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             symbols = await loop.run_in_executor(None, fetch_symbols)
             
             logger.info(f"Found {len(symbols)} symbols in OpenAlgo database")
             
             # Process symbols asynchronously in batches
+<<<<<<< HEAD
             batch_size = self.settings.batch_size  # Use from settings
+=======
+            batch_size = 1000
+>>>>>>> 98cb17d (Fix historicalfetcher)
             for i in range(0, len(symbols), batch_size):
                 batch = symbols[i:i + batch_size]
                 
                 for symbol in batch:
+<<<<<<< HEAD
                     # Categorize by instrument type first
                     db_instrument_type = symbol.instrumenttype
                     exchange = symbol.exchange
@@ -714,6 +800,13 @@ class OpenAlgoSymbolManager:
                         symbol=symbol.symbol,
                         exchange=symbol.exchange,
                         instrument_type=instrument_type,  # Use mapped type
+=======
+                    # Create symbol info object
+                    symbol_info = SymbolInfo(
+                        symbol=symbol.symbol,
+                        exchange=symbol.exchange,
+                        instrument_type=symbol.instrumenttype,
+>>>>>>> 98cb17d (Fix historicalfetcher)
                         token=symbol.token,
                         name=symbol.name,
                         expiry=symbol.expiry,
@@ -723,6 +816,7 @@ class OpenAlgoSymbolManager:
                     )
                     
                     # Categorize by instrument type
+<<<<<<< HEAD
                     if exchange in ['NSE_INDEX', 'BSE_INDEX']:
                         # All symbols from INDEX exchanges go to INDEX category
                         symbols_by_type['INDEX'].append(symbol_info)
@@ -730,18 +824,26 @@ class OpenAlgoSymbolManager:
                         # Also handle case where instrumenttype is explicitly INDEX
                         symbols_by_type['INDEX'].append(symbol_info)
                     elif instrument_type in symbols_by_type:
+=======
+                    instrument_type = symbol.instrumenttype
+                    if instrument_type in symbols_by_type:
+>>>>>>> 98cb17d (Fix historicalfetcher)
                         symbols_by_type[instrument_type].append(symbol_info)
                     elif instrument_type in ['CE', 'PE']:
                         # Options
                         symbols_by_type[instrument_type].append(symbol_info)
+<<<<<<< HEAD
                     else:
                         # Unknown instrument type, log for debugging
                         logger.debug(f"Unknown instrument type: {db_instrument_type} (mapped to: {instrument_type}) for symbol {symbol.symbol} (exchange: {exchange})")
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 # Yield control periodically
                 if i % (batch_size * 5) == 0:
                     await asyncio.sleep(0)
             
+<<<<<<< HEAD
             # Prioritize INDEX symbols: NIFTY, BANKNIFTY, SENSEX, NIFTY50 first
             if 'INDEX' in symbols_by_type and symbols_by_type['INDEX']:
                 index_symbols = symbols_by_type['INDEX']
@@ -764,6 +866,8 @@ class OpenAlgoSymbolManager:
                 
                 logger.info(f"📊 INDEX symbols sorted: {len([s for s in index_symbols if get_index_priority(s) < len(priority_indices)])} priority indices first")
             
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
             # Update cache
             self._symbol_cache = symbols_by_type
             self._cache_timestamp = datetime.now()
@@ -771,6 +875,7 @@ class OpenAlgoSymbolManager:
             # Log breakdown
             for inst_type, symbol_list in symbols_by_type.items():
                 if symbol_list:
+<<<<<<< HEAD
                     # For INDEX, show breakdown by exchange
                     if inst_type == 'INDEX':
                         nse_count = len([s for s in symbol_list if s.exchange == 'NSE_INDEX'])
@@ -779,6 +884,9 @@ class OpenAlgoSymbolManager:
                         logger.info(f"  {inst_type}: {len(symbol_list)} symbols (NSE_INDEX: {nse_count}, BSE_INDEX: {bse_count}, Other: {other_count})")
                     else:
                         logger.info(f"  {inst_type}: {len(symbol_list)} symbols")
+=======
+                    logger.info(f"  {inst_type}: {len(symbol_list)} symbols")
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             return symbols_by_type
                 

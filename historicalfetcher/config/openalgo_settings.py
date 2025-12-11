@@ -60,6 +60,7 @@ class OpenAlgoSettings(BaseSettings):
     questdb_password: Optional[str] = Field(default_factory=lambda: os.getenv('HIST_FETCHER_QUESTDB_PASSWORD'))
     questdb_database: str = Field(default_factory=lambda: os.getenv('HIST_FETCHER_QUESTDB_DATABASE', 'qdb'))
     
+<<<<<<< HEAD
     # Processing Configuration - OPTIMIZED FOR ZERODHA API LIMITS
     # Zerodha API limit: 3 requests/second (official)
     # Recommended: 2.0 requests/second for safety margin below limit
@@ -77,15 +78,28 @@ class OpenAlgoSettings(BaseSettings):
     
     # Data Configuration - INCREASED TIMEFRAMES (from .env)
     # Include more timeframes for comprehensive data collection
+=======
+    # Processing Configuration
+    api_requests_per_second: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_API_REQUESTS_PER_SECOND', '3')))
+    max_concurrent_requests: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_MAX_CONCURRENT_REQUESTS', '5')))
+    batch_size: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_BATCH_SIZE', '50')))
+    chunk_days: int = 60  # Zerodha API limit
+    
+    # Data Configuration
+>>>>>>> 98cb17d (Fix historicalfetcher)
     enabled_timeframes: List[str] = Field(
         default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_TIMEFRAMES', '1m,5m,15m,1h,D').split(',')
     )
     
+<<<<<<< HEAD
     # Expanded instrument types - include all major types
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
     enabled_instrument_types: List[str] = Field(
         default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_INSTRUMENT_TYPES', 'EQ,FUT,CE,PE,INDEX').split(',')
     )
     
+<<<<<<< HEAD
     # Expanded exchanges - include all major exchanges (INDEX exchanges are critical!)
     # Must include NSE_INDEX and BSE_INDEX for index symbol fetching
     enabled_exchanges: List[str] = Field(
@@ -117,6 +131,16 @@ class OpenAlgoSettings(BaseSettings):
     # If False: fetch all CE/PE options (ignore options_allowed_underlyings)
     options_filter_by_underlying: bool = Field(default_factory=lambda: os.getenv('HIST_FETCHER_OPTIONS_FILTER_BY_UNDERLYING', 'true').lower() == 'true')
     
+=======
+    enabled_exchanges: List[str] = Field(
+        default_factory=lambda: os.getenv('HIST_FETCHER_ENABLED_EXCHANGES', 'NSE,BSE,NFO,BFO,NSE_INDEX,BSE_INDEX').split(',')
+    )
+    
+    # Historical Data Configuration
+    historical_days_limit: int = Field(default_factory=lambda: int(os.getenv('HIST_FETCHER_HISTORICAL_DAYS_LIMIT', '365')))
+    start_date_override: Optional[str] = Field(default_factory=lambda: os.getenv('HIST_FETCHER_START_DATE_OVERRIDE'))
+    
+>>>>>>> 98cb17d (Fix historicalfetcher)
     # Notification Configuration (reuse OpenAlgo's notification system)
     telegram_bot_token: Optional[str] = Field(default_factory=lambda: os.getenv('TELEGRAM_BOT_TOKEN'))
     telegram_chat_ids: List[str] = Field(

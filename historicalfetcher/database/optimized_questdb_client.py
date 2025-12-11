@@ -62,18 +62,28 @@ class OptimizedQuestDBClient:
         # Indicator calculation engine (lazy loaded to avoid circular imports)
         self.indicator_engine = None
         self._indicator_config = CalculationConfig(
+<<<<<<< HEAD
             enable_greeks=True,              # Enable Greeks calculator initialization
             calculate_greeks=True,           # Actually calculate Greeks for options
             calculate_iv=True,               # Calculate implied volatility
             calculate_advanced_greeks=True,  # Calculate advanced Greeks (charm, vanna, volga)
+=======
+            enable_greeks=True,
+>>>>>>> 98cb17d (Fix historicalfetcher)
             enable_parallel_processing=True,
             max_workers=4
         )
         
         # Performance optimization - increased batch sizes for better throughput
+<<<<<<< HEAD
         self.batch_insert_size = getattr(settings, 'batch_size', 2000) if settings else 2000  # Use from settings
         self.connection_pool_size = 30  # Increased from 20
         self.preferred_batch_size = getattr(settings, 'batch_size', 5000) * 10 if settings else 5000  # 10x batch_size for large inserts
+=======
+        self.batch_insert_size = 2000  # Increased from 1000
+        self.connection_pool_size = 30  # Increased from 20
+        self.preferred_batch_size = 5000  # For large inserts
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         # Connection pool optimization
         self.pool_min_size = 10
@@ -182,6 +192,7 @@ class OptimizedQuestDBClient:
             return 0
         
         try:
+<<<<<<< HEAD
             # Get or initialize indicator engine
             indicator_engine = self._get_indicator_engine()
             
@@ -238,22 +249,53 @@ class OptimizedQuestDBClient:
                         derived_metrics={}
                     )
                     indicator_results.append(basic_result)
+=======
+            # Calculate indicators for the data
+            if symbol_info.instrument_type == InstrumentType.EQUITY:
+                indicator_results = await self.indicator_engine.calculate_equity_indicators(
+                    symbol_info, candles, timeframe, market_depth_data
+                )
+            elif symbol_info.instrument_type == InstrumentType.FUTURES:
+                indicator_results = await self.indicator_engine.calculate_futures_indicators(
+                    symbol_info, candles, timeframe, spot_price, market_depth_data
+                )
+            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                if spot_price is None:
+                    logger.warning(f"Spot price required for options {symbol_info.symbol}")
+                    spot_price = 0.0
+                indicator_results = await self.indicator_engine.calculate_options_indicators(
+                    symbol_info, candles, timeframe, spot_price, market_depth_data=market_depth_data
+                )
+            elif symbol_info.instrument_type == InstrumentType.INDEX:
+                indicator_results = await self.indicator_engine.calculate_equity_indicators(
+                    symbol_info, candles, timeframe, market_depth_data
+                )
+            else:
+                logger.warning(f"Unsupported instrument type: {symbol_info.instrument_type}")
+                return 0
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             # Get or create appropriate table
             table_name = await self.table_manager.get_or_create_table(symbol_info)
             
+<<<<<<< HEAD
             # Insert data with indicators (enhanced schema)
             if indicator_results and len(indicator_results) > 0:
                 return await self._insert_enhanced_data(table_name, symbol_info, indicator_results)
             else:
                 # Fallback: insert basic OHLCV data without indicators
                 return await self._insert_basic_data(table_name, symbol_info, timeframe, candles)
+=======
+            # Insert data with indicators
+            return await self._insert_enhanced_data(table_name, symbol_info, indicator_results)
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
         except Exception as e:
             self.stats['failed_inserts'] += 1
             logger.error(f"Error upserting data for {symbol_info.symbol}: {e}")
             raise
     
+<<<<<<< HEAD
     async def _insert_basic_data(
         self, 
         table_name: str, 
@@ -308,17 +350,24 @@ class OptimizedQuestDBClient:
             logger.error(f"Error inserting basic data for {symbol_info.symbol}: {e}")
             raise
     
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
     async def _insert_enhanced_data(
         self,
         table_name: str,
         symbol_info: SymbolInfo,
         indicator_results: List[IndicatorResult]
     ) -> int:
+<<<<<<< HEAD
         """Insert enhanced data with all indicators and analytics"""
+=======
+        """Insert data with all calculated indicators and analytics"""
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         if not indicator_results:
             return 0
         
+<<<<<<< HEAD
         try:
             # Convert timeframe to numeric code
             from historicalfetcher.models.data_models import TimeFrameCode
@@ -499,6 +548,20 @@ class OptimizedQuestDBClient:
     
     # Note: _insert_enhanced_options_data is defined below with full implementation
     # that includes symbol_info parameter for options-specific data
+=======
+        # Build insert query based on instrument type
+        if symbol_info.instrument_type == InstrumentType.EQUITY:
+            return await self._insert_enhanced_equity_data(table_name, indicator_results)
+        elif symbol_info.instrument_type == InstrumentType.FUTURES:
+            return await self._insert_enhanced_futures_data(table_name, indicator_results)
+        elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+            return await self._insert_enhanced_options_data(table_name, indicator_results)
+        elif symbol_info.instrument_type == InstrumentType.INDEX:
+            return await self._insert_enhanced_index_data(table_name, indicator_results)
+        else:
+            logger.warning(f"Unsupported instrument type for enhanced insert")
+            return 0
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     async def _insert_enhanced_equity_data(
         self,
@@ -546,6 +609,7 @@ class OptimizedQuestDBClient:
                 result.indicators.get('supertrend_10_3'),
                 result.indicators.get('supertrend_signal_10_3'),
                 result.indicators.get('parabolic_sar'),
+<<<<<<< HEAD
                 result.indicators.get('adx_14'),
                 result.indicators.get('di_plus'),
                 result.indicators.get('di_minus'),
@@ -566,11 +630,14 @@ class OptimizedQuestDBClient:
                 result.indicators.get('aroon_down'),
                 result.indicators.get('aroon_oscillator'),
                 result.indicators.get('aroon_signal'),
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 # Volume Indicators
                 result.indicators.get('volume_sma_20'),
                 result.indicators.get('vwap'),
                 result.indicators.get('obv'),
+<<<<<<< HEAD
                 result.indicators.get('twap'),
                 result.indicators.get('ad_line'),
                 result.indicators.get('ad_line_slope'),
@@ -591,6 +658,8 @@ class OptimizedQuestDBClient:
                 result.indicators.get('rsi_volume_divergence'),
                 result.indicators.get('macd_volume_divergence'),
                 result.indicators.get('price_volume_divergence_type'),
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 # Support/Resistance
                 result.derived_metrics.get('pivot_point') if result.derived_metrics else None,
@@ -649,6 +718,7 @@ class OptimizedQuestDBClient:
                 rsi_14, macd_line, macd_signal, macd_histogram, stoch_k, stoch_d,
                 atr_14, bb_upper, bb_middle, bb_lower, bb_width, bb_percent,
                 supertrend_7_3, supertrend_signal_7_3, supertrend_10_3, supertrend_signal_10_3, parabolic_sar,
+<<<<<<< HEAD
                 adx_14, di_plus, di_minus,
                 ichimoku_tenkan_sen, ichimoku_kijun_sen, ichimoku_senkou_span_a, ichimoku_senkou_span_b,
                 ichimoku_chikou_span, ichimoku_cloud_top, ichimoku_cloud_bottom, ichimoku_cloud_color, ichimoku_signal,
@@ -658,6 +728,9 @@ class OptimizedQuestDBClient:
                 volume_profile_poc, volume_profile_vah, volume_profile_val, volume_profile_balance,
                 volume_price_divergence, volume_divergence_strength, volume_divergence_confirmed,
                 rsi_volume_divergence, macd_volume_divergence, price_volume_divergence_type,
+=======
+                volume_sma_20, vwap, obv,
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 pivot_point, resistance_1, resistance_2, resistance_3, support_1, support_2, support_3,
                 bid_1, bid_qty_1, bid_2, bid_qty_2, bid_3, bid_qty_3, bid_4, bid_qty_4, bid_5, bid_qty_5,
                 ask_1, ask_qty_1, ask_2, ask_qty_2, ask_3, ask_qty_3, ask_4, ask_qty_4, ask_5, ask_qty_5,
@@ -671,6 +744,7 @@ class OptimizedQuestDBClient:
                 $19, $20, $21, $22, $23, $24,
                 $25, $26, $27, $28, $29,
                 $30, $31, $32,
+<<<<<<< HEAD
                 $33, $34, $35, $36, $37, $38, $39, $40, $41,
                 $42, $43, $44, $45,
                 $46, $47, $48, $49, $50, $51, $52, $53,
@@ -718,17 +792,33 @@ class OptimizedQuestDBClient:
             else:
                 # Re-raise if it's not a column error
                 raise
+=======
+                $33, $34, $35, $36, $37, $38, $39,
+                $40, $41, $42, $43, $44, $45, $46, $47, $48, $49,
+                $50, $51, $52, $53, $54, $55, $56, $57, $58, $59,
+                $60, $61, $62, $63, $64,
+                $65, $66, $67,
+                $68
+            )
+        """
+        
+        return await self._execute_batch_insert(insert_query, insert_data, table_name)
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     async def _insert_enhanced_options_data(
         self,
         table_name: str,
+<<<<<<< HEAD
         symbol_info: SymbolInfo,
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
         indicator_results: List[IndicatorResult]
     ) -> int:
         """Insert enhanced options data with Greeks and indicators"""
         
         insert_data = []
         
+<<<<<<< HEAD
         # Extract options-specific data from symbol_info
         # Use token if available, otherwise use symbol as contract_token
         contract_token = symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol
@@ -750,6 +840,22 @@ class OptimizedQuestDBClient:
                 
                 # Basic OHLCV + OI
                 result.open, result.high, result.low, result.close, result.volume, result.oi,
+=======
+        for result in indicator_results:
+            # Extract options-specific data
+            contract_token = result.symbol  # Use symbol as contract token for now
+            option_type = 1 if 'CE' in result.symbol else 2  # 1=CE, 2=PE
+            
+            # Extract strike from symbol (this would need proper parsing)
+            strike = 0  # This should be extracted from symbol_info
+            
+            data_tuple = (
+                # Contract Information
+                contract_token, option_type, strike, result.timeframe,
+                
+                # Basic OHLCV + OI
+                result.open, result.high, result.low, result.close, result.volume, 0,  # OI placeholder
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 # Options Greeks
                 result.greeks.get('delta') if result.greeks else None,
@@ -771,17 +877,23 @@ class OptimizedQuestDBClient:
                 
                 # Advanced Greeks
                 result.greeks.get('lambda_greek') if result.greeks else None,
+<<<<<<< HEAD
                 result.greeks.get('epsilon') if result.greeks else None,
                 result.greeks.get('vera') if result.greeks else None,
                 result.greeks.get('charm') if result.greeks else None,
                 result.greeks.get('vanna') if result.greeks else None,
                 result.greeks.get('volga') if result.greeks else None,
+=======
+                None,  # epsilon placeholder
+                None,  # vera placeholder
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 # Risk Metrics
                 result.greeks.get('probability_itm') if result.greeks else None,
                 None,  # probability_profit placeholder
                 None,  # max_pain placeholder
                 
+<<<<<<< HEAD
                 # Technical Indicators (ALL calculated indicators for options)
                 # Trend Indicators
                 result.indicators.get('ema_9'),
@@ -839,6 +951,15 @@ class OptimizedQuestDBClient:
                 result.indicators.get('rsi_volume_divergence'),
                 result.indicators.get('macd_volume_divergence'),
                 result.indicators.get('price_volume_divergence_type'),
+=======
+                # Technical Indicators (subset for options)
+                result.indicators.get('rsi_14'),
+                result.indicators.get('ema_9'),
+                result.indicators.get('ema_21'),
+                result.indicators.get('atr_14'),
+                result.indicators.get('bb_upper'),
+                result.indicators.get('bb_lower'),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 # Market Depth (5 levels) - same as equity
                 result.market_depth.get('bid_1') if result.market_depth else None,
@@ -888,7 +1009,11 @@ class OptimizedQuestDBClient:
             
             insert_data.append(data_tuple)
         
+<<<<<<< HEAD
         # Comprehensive options insert query with ALL calculated indicators
+=======
+        # Comprehensive options insert query (simplified for now)
+>>>>>>> 98cb17d (Fix historicalfetcher)
         insert_query = f"""
             INSERT INTO {table_name} (
                 contract_token, option_type, strike, tf,
@@ -896,6 +1021,7 @@ class OptimizedQuestDBClient:
                 delta, gamma, theta, vega, rho,
                 implied_volatility, historical_volatility, iv_rank, iv_percentile,
                 intrinsic_value, time_value, moneyness,
+<<<<<<< HEAD
                 lambda_greek, epsilon, vera, charm, vanna, volga,
                 probability_itm, probability_profit, max_pain,
                 ema_9, ema_21, ema_50, ema_200, sma_20, sma_50,
@@ -907,6 +1033,11 @@ class OptimizedQuestDBClient:
                 volume_profile_poc, volume_profile_vah, volume_profile_val, volume_profile_balance,
                 volume_price_divergence, volume_divergence_strength, volume_divergence_confirmed,
                 rsi_volume_divergence, macd_volume_divergence, price_volume_divergence_type,
+=======
+                lambda_greek, epsilon, vera,
+                probability_itm, probability_profit, max_pain,
+                rsi_14, ema_9, ema_21, atr_14, bb_upper, bb_lower,
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 bid_1, bid_qty_1, bid_2, bid_qty_2, bid_3, bid_qty_3, bid_4, bid_qty_4, bid_5, bid_qty_5,
                 ask_1, ask_qty_1, ask_2, ask_qty_2, ask_3, ask_qty_3, ask_4, ask_qty_4, ask_5, ask_qty_5,
                 bid_ask_spread, bid_ask_spread_pct, mid_price, total_bid_qty, total_ask_qty,
@@ -919,6 +1050,7 @@ class OptimizedQuestDBClient:
                 $11, $12, $13, $14, $15,
                 $16, $17, $18, $19,
                 $20, $21, $22,
+<<<<<<< HEAD
                 $23, $24, $25, $26, $27, $28,
                 $29, $30, $31,
                 $32, $33, $34, $35, $36, $37,
@@ -1029,12 +1161,28 @@ class OptimizedQuestDBClient:
             else:
                 # Re-raise if it's not a column error
                 raise
+=======
+                $23, $24, $25,
+                $26, $27, $28,
+                $29, $30, $31, $32, $33, $34,
+                $35, $36, $37, $38, $39, $40, $41, $42, $43, $44,
+                $45, $46, $47, $48, $49, $50, $51, $52, $53, $54,
+                $55, $56, $57, $58, $59,
+                $60, $61, $62,
+                $63, $64, $65, $66, $67, $68,
+                $69
+            )
+        """
+        
+        return await self._execute_batch_insert(insert_query, insert_data, table_name)
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     async def _insert_enhanced_futures_data(self, table_name: str, indicator_results: List[IndicatorResult]) -> int:
         """Insert enhanced futures data - placeholder implementation"""
         # Similar to equity but with futures-specific fields
         return await self._insert_enhanced_equity_data(table_name, indicator_results)
     
+<<<<<<< HEAD
     async def _get_table_columns(self, table_name: str) -> set:
         """Get list of columns that exist in the table by trying to query it"""
         try:
@@ -1530,6 +1678,12 @@ class OptimizedQuestDBClient:
             else:
                 # Re-raise if it's not a column error
                 raise
+=======
+    async def _insert_enhanced_index_data(self, table_name: str, indicator_results: List[IndicatorResult]) -> int:
+        """Insert enhanced index data - placeholder implementation"""
+        # Similar to equity but without volume-based indicators
+        return await self._insert_enhanced_equity_data(table_name, indicator_results)
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     async def _insert_equity_data(
         self,
@@ -1540,14 +1694,21 @@ class OptimizedQuestDBClient:
     ) -> int:
         """Insert equity data with optimized schema"""
         
+<<<<<<< HEAD
         from historicalfetcher.models.data_models import TimeFrameCode
         tf_string = TimeFrameCode.to_string(tf_code)
         
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
         # Prepare batch data
         insert_data = []
         for candle in candles:
             insert_data.append((
+<<<<<<< HEAD
                 tf_string,              # String timeframe
+=======
+                int(tf_code),           # Numeric timeframe
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 candle.open,
                 candle.high,
                 candle.low,
@@ -1572,17 +1733,26 @@ class OptimizedQuestDBClient:
     ) -> int:
         """Insert futures data with contract tracking"""
         
+<<<<<<< HEAD
         from historicalfetcher.models.data_models import TimeFrameCode
         tf_string = TimeFrameCode.to_string(tf_code)
         
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
         expiry_date = self._parse_expiry_date(symbol_info.expiry) if symbol_info.expiry else None
         
         insert_data = []
         for candle in candles:
             insert_data.append((
+<<<<<<< HEAD
                 symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol,  # Contract-specific token
                 expiry_date,
                 tf_string,
+=======
+                symbol_info.instrument_token,  # Contract-specific token
+                expiry_date,
+                int(tf_code),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 candle.open,
                 candle.high,
                 candle.low,
@@ -1608,15 +1778,21 @@ class OptimizedQuestDBClient:
     ) -> int:
         """Insert options data with optimized encoding"""
         
+<<<<<<< HEAD
         from historicalfetcher.models.data_models import TimeFrameCode
         tf_string = TimeFrameCode.to_string(tf_code)
         
         # Convert option type to numeric (1=CE, 2=PE)
         option_type_code = 1 if symbol_info.instrument_type in [InstrumentType.CALL_OPTION, 'CE'] else 2
+=======
+        # Convert option type to numeric (1=CE, 2=PE)
+        option_type_code = 1 if symbol_info.instrument_type == InstrumentType.CALL_OPTION else 2
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         # Convert strike to integer (multiply by 100 for precision)
         strike_int = int((symbol_info.strike or 0) * 100)
         
+<<<<<<< HEAD
         # Use token if available, otherwise use symbol as contract_token
         contract_token = symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol
         
@@ -1627,6 +1803,15 @@ class OptimizedQuestDBClient:
                 option_type_code,              # Numeric option type
                 strike_int,                    # Integer strike
                 tf_string,
+=======
+        insert_data = []
+        for candle in candles:
+            insert_data.append((
+                symbol_info.instrument_token,  # Contract-specific token
+                option_type_code,              # Numeric option type
+                strike_int,                    # Integer strike
+                int(tf_code),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 candle.open,
                 candle.high,
                 candle.low,
@@ -1657,6 +1842,7 @@ class OptimizedQuestDBClient:
     ) -> int:
         """Insert index data (no volume/OI)"""
         
+<<<<<<< HEAD
         from historicalfetcher.models.data_models import TimeFrameCode
         tf_string = TimeFrameCode.to_string(tf_code)
         
@@ -1664,6 +1850,12 @@ class OptimizedQuestDBClient:
         for candle in candles:
             insert_data.append((
                 tf_string,
+=======
+        insert_data = []
+        for candle in candles:
+            insert_data.append((
+                int(tf_code),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 candle.open,
                 candle.high,
                 candle.low,
@@ -1738,6 +1930,7 @@ class OptimizedQuestDBClient:
         
         try:
             table_name = await self.table_manager.get_or_create_table(symbol_info)
+<<<<<<< HEAD
             tf_string = TimeFrameCode.to_string(timeframe)
             
             # Build query based on instrument type
@@ -1749,12 +1942,28 @@ class OptimizedQuestDBClient:
             elif inst_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION, 'CE', 'PE']:
                 base_query = f"SELECT contract_token, option_type, strike, tf, open, high, low, close, volume, oi, timestamp FROM {table_name}"
             elif inst_type in [InstrumentType.INDEX, 'INDEX']:
+=======
+            tf_code = TimeFrameCode.from_timeframe(timeframe)
+            
+            # Build query based on instrument type
+            if symbol_info.instrument_type == InstrumentType.EQUITY:
+                base_query = f"SELECT tf, open, high, low, close, volume, timestamp FROM {table_name}"
+            elif symbol_info.instrument_type == InstrumentType.FUTURES:
+                base_query = f"SELECT contract_token, expiry_date, tf, open, high, low, close, volume, oi, timestamp FROM {table_name}"
+            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                base_query = f"SELECT contract_token, option_type, strike, tf, open, high, low, close, volume, oi, timestamp FROM {table_name}"
+            elif symbol_info.instrument_type == InstrumentType.INDEX:
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 base_query = f"SELECT tf, open, high, low, close, timestamp FROM {table_name}"
             else:
                 base_query = f"SELECT * FROM {table_name}"
             
             # Add WHERE conditions
+<<<<<<< HEAD
             conditions = [f"tf = '{tf_string}'"]
+=======
+            conditions = [f"tf = {int(tf_code)}"]
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             if start_date:
                 conditions.append(f"timestamp >= '{start_date.isoformat()}'")
@@ -1789,7 +1998,11 @@ class OptimizedQuestDBClient:
         
         try:
             table_name = TableNamingStrategy.get_options_table_name(underlying, exchange, expiry)
+<<<<<<< HEAD
             tf_string = TimeFrameCode.to_string(timeframe)
+=======
+            tf_code = TimeFrameCode.from_timeframe(timeframe)
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             # Get latest data if no timestamp specified
             time_condition = ""
@@ -1804,7 +2017,11 @@ class OptimizedQuestDBClient:
                     open, high, low, close, volume, oi,
                     timestamp
                 FROM {table_name}
+<<<<<<< HEAD
                 WHERE tf = '{tf_string}' {time_condition}
+=======
+                WHERE tf = {int(tf_code)} {time_condition}
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 ORDER BY strike, option_type, timestamp DESC
             """
             
@@ -1947,14 +2164,32 @@ class OptimizedQuestDBClient:
             
             async with self.pool.acquire() as conn:
                 # Get the latest timestamp from the table for this timeframe
+<<<<<<< HEAD
                 # Use string timeframe (tf is now SYMBOL type with string values)
                 from historicalfetcher.models.data_models import TimeFrameCode
                 tf_string = TimeFrameCode.to_string(timeframe)
+=======
+                # Convert timeframe string to numeric code
+                timeframe_map = {
+                    '1m': TimeFrameCode.MINUTE_1,
+                    '3m': TimeFrameCode.MINUTE_3,
+                    '5m': TimeFrameCode.MINUTE_5,
+                    '15m': TimeFrameCode.MINUTE_15,
+                    '30m': TimeFrameCode.MINUTE_30,
+                    '1h': TimeFrameCode.HOUR_1,
+                    'D': TimeFrameCode.DAILY
+                }
+                tf_code = timeframe_map.get(timeframe, TimeFrameCode.MINUTE_1).value
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 
                 query = f"""
                     SELECT MAX(timestamp) as last_date 
                     FROM {table_name} 
+<<<<<<< HEAD
                     WHERE tf = '{tf_string}'
+=======
+                    WHERE tf = {tf_code}
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 """
                 result = await conn.fetchval(query)
                 
@@ -1966,7 +2201,11 @@ class OptimizedQuestDBClient:
             logger.debug(f"Could not get last fetch date for {symbol_info.symbol} ({timeframe}): {e}")
             return None
     
+<<<<<<< HEAD
     async def update_fetch_status(self, symbol_info, timeframe: str, status: str, records_count: int = 0):
+=======
+    async def update_fetch_status(self, symbol_info, timeframe: str, status: str, records_count: int):
+>>>>>>> 98cb17d (Fix historicalfetcher)
         """Update fetch status for a symbol and timeframe"""
         try:
             # Create fetch_status table if it doesn't exist
@@ -2002,7 +2241,11 @@ class OptimizedQuestDBClient:
                 """, 
                     symbol_info.symbol,
                     symbol_info.exchange,
+<<<<<<< HEAD
                     symbol_info.token if hasattr(symbol_info, 'token') and symbol_info.token else symbol_info.symbol,  # instrument_token
+=======
+                    str(symbol_info.token),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                     symbol_info.instrument_type,
                     timeframe,
                     now,

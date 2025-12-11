@@ -1,5 +1,6 @@
 """Technical Indicators and Analytics Engine"""
 
+<<<<<<< HEAD
 # Handle missing numba gracefully
 try:
     from .numba_indicators import NumbaIndicators
@@ -107,6 +108,10 @@ except ImportError:
     # Fallback is handled in indicator_engine.py
     OptionsGreeksCalculator = None
 
+=======
+from .numba_indicators import NumbaIndicators
+from .options_greeks import OptionsGreeksCalculator
+>>>>>>> 98cb17d (Fix historicalfetcher)
 from .indicator_engine import IndicatorEngine
 
 __all__ = ['NumbaIndicators', 'OptionsGreeksCalculator', 'IndicatorEngine']

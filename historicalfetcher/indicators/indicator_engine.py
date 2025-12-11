@@ -33,6 +33,7 @@ class InstrumentType(str, Enum):
     CALL_OPTION = "CE"
     PUT_OPTION = "PE"
     INDEX = "INDEX"
+<<<<<<< HEAD
 
 # Import NumbaIndicators with fallback
 try:
@@ -199,6 +200,10 @@ except ImportError as e:
             sqrt_T = math.sqrt(T)
             vega = S * exp_qT * _norm_pdf(d1) * sqrt_T / 100
             return vega * d1 * d2 / sigma
+=======
+from historicalfetcher.indicators.numba_indicators import NumbaIndicators, TimeFrameOptimizedIndicators, NumbaOptimizer
+from historicalfetcher.indicators.options_greeks import OptionsGreeksCalculator, ImpliedVolatilityCalculator, AdvancedGreeks
+>>>>>>> 98cb17d (Fix historicalfetcher)
 from historicalfetcher.models.data_models import TimeFrameCode, OptionTypeCode, IndicatorResult, CalculationConfig
 
 # Logger is imported from loguru above
@@ -227,6 +232,7 @@ class IndicatorEngine:
             'average_calculation_time': 0.0
         }
         
+<<<<<<< HEAD
         # Initialize Numba indicators
         self.numba_indicators = NumbaIndicators()
         
@@ -238,6 +244,12 @@ class IndicatorEngine:
                 logger.warning(f"Options calculator initialization failed: {e}")
                 self.options_calculator = None
         
+=======
+        # Warm up Numba functions
+        NumbaOptimizer.warm_up_functions()
+        
+        logger.info("Indicator Engine initialized with optimized Numba functions")
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     async def calculate_equity_indicators(
         self,
@@ -267,7 +279,11 @@ class IndicatorEngine:
             
             # Create results
             results = []
+<<<<<<< HEAD
             tf_string = TimeFrameCode.to_string(timeframe)
+=======
+            tf_code = TimeFrameCode.from_timeframe(timeframe)
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             for i, candle in enumerate(candles):
                 # Extract indicators for this timestamp
@@ -284,14 +300,21 @@ class IndicatorEngine:
                 
                 result = IndicatorResult(
                     symbol=symbol_info.symbol,
+<<<<<<< HEAD
                     timeframe=tf_string,
+=======
+                    timeframe=int(tf_code),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                     timestamp=candle.timestamp,
                     open=candle.open,
                     high=candle.high,
                     low=candle.low,
                     close=candle.close,
                     volume=candle.volume,
+<<<<<<< HEAD
                     oi=candle.oi,
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
                     indicators=candle_indicators,
                     derived_metrics=candle_derived,
                     market_depth=market_depth_data
@@ -342,18 +365,25 @@ class IndicatorEngine:
                 symbol_info, candles, spot_price, risk_free_rate, dividend_yield
             )
             
+<<<<<<< HEAD
             # Log Greeks calculation status
             if greeks_data:
                 logger.debug(f"Greeks calculated for {symbol_info.symbol}: {list(greeks_data.keys())}")
             else:
                 logger.warning(f"No Greeks calculated for {symbol_info.symbol} - check calculate_greeks config")
             
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
             # Calculate derived metrics
             derived_metrics = self._calculate_derived_metrics(ohlcv_data, indicators)
             
             # Create results
             results = []
+<<<<<<< HEAD
             tf_string = TimeFrameCode.to_string(timeframe)
+=======
+            tf_code = TimeFrameCode.from_timeframe(timeframe)
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             for i, candle in enumerate(candles):
                 # Extract indicators for this timestamp
@@ -376,14 +406,21 @@ class IndicatorEngine:
                 
                 result = IndicatorResult(
                     symbol=symbol_info.symbol,
+<<<<<<< HEAD
                     timeframe=tf_string,
+=======
+                    timeframe=int(tf_code),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                     timestamp=candle.timestamp,
                     open=candle.open,
                     high=candle.high,
                     low=candle.low,
                     close=candle.close,
                     volume=candle.volume,
+<<<<<<< HEAD
                     oi=candle.oi,
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
                     indicators=candle_indicators,
                     greeks=candle_greeks,
                     derived_metrics=candle_derived,
@@ -439,7 +476,11 @@ class IndicatorEngine:
             
             # Create results
             results = []
+<<<<<<< HEAD
             tf_string = TimeFrameCode.to_string(timeframe)
+=======
+            tf_code = TimeFrameCode.from_timeframe(timeframe)
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             for i, candle in enumerate(candles):
                 # Extract indicators for this timestamp
@@ -456,14 +497,21 @@ class IndicatorEngine:
                 
                 result = IndicatorResult(
                     symbol=symbol_info.symbol,
+<<<<<<< HEAD
                     timeframe=tf_string,
+=======
+                    timeframe=int(tf_code),
+>>>>>>> 98cb17d (Fix historicalfetcher)
                     timestamp=candle.timestamp,
                     open=candle.open,
                     high=candle.high,
                     low=candle.low,
                     close=candle.close,
                     volume=candle.volume,
+<<<<<<< HEAD
                     oi=candle.oi,
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
                     indicators=candle_indicators,
                     derived_metrics=candle_derived,
                     market_depth=market_depth_data
@@ -544,6 +592,7 @@ class IndicatorEngine:
             indicators['bb_upper'] = bb_upper
             indicators['bb_middle'] = bb_middle
             indicators['bb_lower'] = bb_lower
+<<<<<<< HEAD
             # Bollinger Bands width - avoid division by zero
             indicators['bb_width'] = np.where(
                 bb_middle != 0,
@@ -557,6 +606,10 @@ class IndicatorEngine:
                 (close - bb_lower) / bb_range * 100,
                 0.0
             )
+=======
+            indicators['bb_width'] = (bb_upper - bb_lower) / bb_middle * 100
+            indicators['bb_percent'] = (close - bb_lower) / (bb_upper - bb_lower) * 100
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         if self.config.calculate_volume_indicators and instrument_type != InstrumentType.INDEX:
             # Volume indicators (not applicable to indices)
@@ -582,6 +635,7 @@ class IndicatorEngine:
         indicators['di_plus'] = di_plus
         indicators['di_minus'] = di_minus
         
+<<<<<<< HEAD
         # Normalize instrument_type for comparison
         inst_type_str = str(instrument_type).upper() if isinstance(instrument_type, str) else instrument_type
         is_equity = inst_type_str in [InstrumentType.EQUITY, 'EQ']
@@ -671,6 +725,8 @@ class IndicatorEngine:
                 indicators['macd_volume_divergence'] = macd_vol_div.astype(np.float64)
                 indicators['price_volume_divergence_type'] = price_vol_div_type.astype(np.float64)
         
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
         return indicators
     
     async def _calculate_options_greeks(
@@ -684,7 +740,10 @@ class IndicatorEngine:
         """Calculate options Greeks for all candles"""
         
         if not self.config.calculate_greeks:
+<<<<<<< HEAD
             logger.debug(f"Greeks calculation disabled for {symbol_info.symbol} (calculate_greeks=False)")
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
             return {}
         
         n = len(candles)
@@ -711,6 +770,7 @@ class IndicatorEngine:
         
         # Options parameters
         strike = symbol_info.strike or 0.0
+<<<<<<< HEAD
         
         # Validate strike and spot price - critical for Greeks calculation
         if strike <= 0:
@@ -732,10 +792,14 @@ class IndicatorEngine:
             is_call = inst_type.upper() in ['CE', 'CALL', 'CALL_OPTION']
         else:
             is_call = inst_type == InstrumentType.CALL_OPTION
+=======
+        is_call = symbol_info.instrument_type == InstrumentType.CALL_OPTION
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         # Calculate expiry time for each candle
         expiry_date = self._parse_expiry_date(symbol_info.expiry)
         
+<<<<<<< HEAD
         # Validate expiry date
         if expiry_date is None:
             logger.warning(f"Could not parse expiry for {symbol_info.symbol} (expiry='{symbol_info.expiry}'), cannot calculate Greeks")
@@ -743,6 +807,8 @@ class IndicatorEngine:
                 greeks[key].fill(0.0)
             return greeks
         
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
         for i, candle in enumerate(candles):
             # Calculate time to expiry in years
             time_to_expiry = self._calculate_time_to_expiry(candle.timestamp, expiry_date)
@@ -766,6 +832,7 @@ class IndicatorEngine:
                 continue
             
             # Calculate implied volatility if enabled
+<<<<<<< HEAD
             # Initialize iv to default value first (always available for Greeks calculation)
             iv = 0.2  # Default 20% volatility
             
@@ -801,6 +868,21 @@ class IndicatorEngine:
                  intrinsic_val, time_val, moneyness_val, prob_itm) = OptionsGreeksCalculator.calculate_all_greeks(
                     spot_price, strike, time_to_expiry, risk_free_rate, iv, is_call, dividend_yield
                 )
+=======
+            if self.config.calculate_iv:
+                iv = ImpliedVolatilityCalculator.implied_volatility_newton_raphson(
+                    candle.close, spot_price, strike, time_to_expiry, risk_free_rate, is_call, dividend_yield
+                )
+                greeks['implied_volatility'][i] = iv
+            else:
+                iv = 0.2  # Default 20% volatility
+            
+            # Calculate all Greeks
+            (option_price, delta, gamma, theta, vega, rho, lambda_val,
+             intrinsic_val, time_val, moneyness_val, prob_itm) = OptionsGreeksCalculator.calculate_all_greeks(
+                spot_price, strike, time_to_expiry, risk_free_rate, iv, is_call, dividend_yield
+            )
+>>>>>>> 98cb17d (Fix historicalfetcher)
             
             greeks['delta'][i] = delta
             greeks['gamma'][i] = gamma
@@ -839,12 +921,17 @@ class IndicatorEngine:
         derived['price_change'] = price_changes
         derived['price_change_pct'] = pct_changes
         
+<<<<<<< HEAD
         # High-low metrics - avoid division by zero
         derived['high_low_pct'] = np.where(
             close != 0,
             ((high - low) / close) * 100,
             0.0
         )
+=======
+        # High-low metrics
+        derived['high_low_pct'] = ((high - low) / close) * 100
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         # Pivot points (calculated for each day)
         derived['pivot_point'] = np.empty_like(close)
@@ -906,6 +993,7 @@ class IndicatorEngine:
         metrics['volume_change_pct'] = np.concatenate([[0], volume_change_pct])
         
         # Basis calculations (if spot price available)
+<<<<<<< HEAD
         if spot_price is not None and spot_price != 0:
             metrics['spot_price'] = np.full_like(close, spot_price)
             metrics['basis'] = close - spot_price
@@ -915,6 +1003,12 @@ class IndicatorEngine:
             metrics['spot_price'] = np.full_like(close, spot_price)
             metrics['basis'] = close - spot_price
             metrics['basis_pct'] = np.zeros_like(close)
+=======
+        if spot_price is not None:
+            metrics['spot_price'] = np.full_like(close, spot_price)
+            metrics['basis'] = close - spot_price
+            metrics['basis_pct'] = ((close - spot_price) / spot_price) * 100
+>>>>>>> 98cb17d (Fix historicalfetcher)
         
         return metrics
     
@@ -930,6 +1024,7 @@ class IndicatorEngine:
         return changes, pct_changes
     
     def _parse_expiry_date(self, expiry_str: Optional[str]) -> Optional[datetime]:
+<<<<<<< HEAD
         """Parse expiry date string supporting multiple formats"""
         if not expiry_str:
             return None
@@ -983,6 +1078,17 @@ class IndicatorEngine:
         
         logger.warning(f"Could not parse expiry date '{expiry_str}' with any known format")
         return None
+=======
+        """Parse expiry date string"""
+        if not expiry_str:
+            return None
+        
+        try:
+            return datetime.strptime(expiry_str, "%d-%b-%y")
+        except Exception as e:
+            logger.warning(f"Could not parse expiry date '{expiry_str}': {e}")
+            return None
+>>>>>>> 98cb17d (Fix historicalfetcher)
     
     def _calculate_time_to_expiry(self, current_time: datetime, expiry_date: Optional[datetime]) -> float:
         """Calculate time to expiry in years"""
@@ -1014,6 +1120,7 @@ class IndicatorEngine:
         self.executor.shutdown(wait=True)
         self.clear_cache()
         logger.info("Indicator Engine cleaned up")
+<<<<<<< HEAD
     
     def _candles_to_arrays(self, candles: List[HistoricalCandle]) -> Dict[str, np.ndarray]:
         """Convert candles to numpy arrays for efficient processing"""
@@ -1365,6 +1472,8 @@ class IndicatorEngine:
             metrics['cost_of_carry'] = np.full_like(closes, 0.06)  # 6% annual rate
         
         return metrics
+=======
+>>>>>>> 98cb17d (Fix historicalfetcher)
 
 class BatchIndicatorProcessor:
     """Process indicators for multiple symbols in parallel"""
@@ -1384,18 +1493,27 @@ class BatchIndicatorProcessor:
         tasks = []
         
         for symbol_info, candles, timeframe in symbols_data:
+<<<<<<< HEAD
             inst_type = symbol_info.instrument_type
             if inst_type in [InstrumentType.EQUITY, 'EQ']:
+=======
+            if symbol_info.instrument_type == InstrumentType.EQUITY:
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 task = self.engine.calculate_equity_indicators(
                     symbol_info, candles, timeframe,
                     market_depth_data.get(symbol_info.symbol) if market_depth_data else None
                 )
+<<<<<<< HEAD
             elif inst_type in [InstrumentType.FUTURES, 'FUT']:
+=======
+            elif symbol_info.instrument_type == InstrumentType.FUTURES:
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 spot_price = spot_prices.get(symbol_info.symbol) if spot_prices else None
                 task = self.engine.calculate_futures_indicators(
                     symbol_info, candles, timeframe, spot_price,
                     market_depth_data.get(symbol_info.symbol) if market_depth_data else None
                 )
+<<<<<<< HEAD
             elif inst_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION, 'CE', 'PE']:
                 # Extract underlying from option symbol
                 import re
@@ -1403,6 +1521,10 @@ class BatchIndicatorProcessor:
                 match = re.match(r"^([A-Z]+)(\d{2}[A-Z]{3}\d{2}[\d.]+)(CE|PE)$", symbol_info.symbol.upper())
                 if match:
                     underlying = match.group(1)
+=======
+            elif symbol_info.instrument_type in [InstrumentType.CALL_OPTION, InstrumentType.PUT_OPTION]:
+                underlying = symbol_info.extract_underlying_symbol()
+>>>>>>> 98cb17d (Fix historicalfetcher)
                 spot_price = spot_prices.get(underlying) if spot_prices else 0.0
                 task = self.engine.calculate_options_indicators(
                     symbol_info, candles, timeframe, spot_price,
@@ -1450,11 +1572,15 @@ def process_market_depth_data(bid_ask_data: Dict) -> Dict[str, float]:
     if processed['bid_1'] > 0 and processed['ask_1'] > 0:
         processed['bid_ask_spread'] = processed['ask_1'] - processed['bid_1']
         processed['mid_price'] = (processed['bid_1'] + processed['ask_1']) / 2.0
+<<<<<<< HEAD
         # Bid-ask spread percentage - avoid division by zero
         if processed['mid_price'] != 0:
             processed['bid_ask_spread_pct'] = (processed['bid_ask_spread'] / processed['mid_price']) * 100
         else:
             processed['bid_ask_spread_pct'] = 0.0
+=======
+        processed['bid_ask_spread_pct'] = (processed['bid_ask_spread'] / processed['mid_price']) * 100
+>>>>>>> 98cb17d (Fix historicalfetcher)
     else:
         processed['bid_ask_spread'] = 0.0
         processed['mid_price'] = 0.0
@@ -1464,7 +1590,11 @@ def process_market_depth_data(bid_ask_data: Dict) -> Dict[str, float]:
     processed['total_bid_qty'] = sum(processed[f'bid_qty_{i}'] for i in range(1, 6))
     processed['total_ask_qty'] = sum(processed[f'ask_qty_{i}'] for i in range(1, 6))
     
+<<<<<<< HEAD
     # Bid/ask ratio - avoid division by zero
+=======
+    # Bid/ask ratio
+>>>>>>> 98cb17d (Fix historicalfetcher)
     if processed['total_ask_qty'] > 0:
         processed['bid_ask_ratio'] = processed['total_bid_qty'] / processed['total_ask_qty']
     else:
